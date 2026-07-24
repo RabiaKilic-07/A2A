@@ -13,10 +13,16 @@ def _summarize_result(out: dict) -> str:
     status = out.get("status", "?")
     if status == "incomplete":
         return f"incomplete eksik={out.get('missing_fields')}"
-    if status == "available":
-        return f"available fiyat={out.get('price')}"
+    if status == "stage1_ok":
+        return "stage1_ok → bed_options"
+    if status == "no_match":
+        return "no_match (uygun oda yok)"
+    if status == "options":
+        return f"options ({len(out.get('options', []))} seçenek)"
+    if status == "needs_confirmation":
+        return "needs_confirmation (özet sunuldu, onay bekleniyor)"
     if status == "confirmed":
-        return f"confirmed booking={out.get('booking_id')}"
+        return f"confirmed booking={out.get('booking_id')} oda={out.get('room_id')}"
     return status
 
 

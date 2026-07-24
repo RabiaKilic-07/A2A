@@ -10,8 +10,9 @@ def user_content(text: str) -> types.Content:
 
 
 def content_text(content) -> str:
+    # "thought" (düşünme/muhakeme) parçalarını ATLA — bunlar kullanıcıya gösterilmemeli.
     parts = getattr(content, "parts", None) or []
-    out = [p.text for p in parts if getattr(p, "text", None)]
+    out = [p.text for p in parts if getattr(p, "text", None) and not getattr(p, "thought", False)]
     return " ".join(out).strip()
 
 

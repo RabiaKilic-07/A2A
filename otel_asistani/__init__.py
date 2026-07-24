@@ -18,14 +18,18 @@ Kurulum:
   python main.py
 
 Gemini anahtarını https://aistudio.google.com/app/apikey adresinden alabilirsin.
-hotel_backend, run_rag ve run_complaint_subagent birer STUB'dır — gerçek envanter/RAG ile değiştir.
+hotel_backend (envanter), hotel_info_db (bilgi) ve run_complaint_subagent birer MOCK/STUB'dır —
+gerçek veritabanı/servis ile değiştir.
 
 Modüller:
   config             Gemini istemcisi + model ayarı
   reservation_state  ReservationState + doğrulama (sağlayıcıdan bağımsız)
-  hotel_backend      Envanter/DB STUB'ı
+  hotel_backend      Oda envanteri MOCK'u (data/rooms.json)
+  hotel_info_db      Otel bilgi tabanı MOCK'u (data/hotel_info.json)
   reservation_tools  Tool tanımları + handler'lar (kritik garantiler)
   gemini_utils       Gemini içerik/metin yardımcıları
+  prompt_rules       Ortak prompt kuralları
+  wait_filler        TTS bekleme cümlesi üretimi (eş zamanlı)
   session            Session state + "yarım rezervasyon" nudge'ları
   agents/            router, reservation, hotel_info, complaint, chat
   orchestrator       Tur yönetimi (router kararına göre yönlendirme)

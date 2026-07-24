@@ -8,7 +8,7 @@ active_flow yönetimi:
 
 from .agents.chat import run_chat_agent
 from .agents.complaint import run_complaint_subagent
-from .agents.hotel_info import run_rag
+from .agents.hotel_info import run_hotel_info
 from .agents.reservation import run_reservation_subagent
 from .agents.router import route
 from .gemini_utils import user_content
@@ -29,7 +29,7 @@ def handle_user_turn(session: Session, user_text: str) -> str:
         return reply
 
     if target == "hotel_info":
-        return run_rag(session, user_text)      # SAPMA: active_flow'a dokunma
+        return run_hotel_info(session, user_text)   # SAPMA: active_flow'a dokunma
 
     if target == "complaint":
         session.active_flow = "complaint"

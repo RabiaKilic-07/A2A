@@ -1,0 +1,174 @@
+{
+  "rooms": [
+    {
+      "id": "STD-01",
+      "room_type": "standart",
+      "min_guests": 1,
+      "max_guests": 2,
+      "view_type": "deniz",
+      "bed_layout": "1 çift kişilik yatak",
+      "price_per_night": 4000,
+      "unavailable_dates": [
+        "2026-07-20",
+        "2026-07-21"
+      ]
+    },
+    {
+      "id": "STD-02",
+      "room_type": "standart",
+      "min_guests": 1,
+      "max_guests": 2,
+      "view_type": "bahçe",
+      "bed_layout": "2 tek kişilik yatak",
+      "price_per_night": 3500,
+      "unavailable_dates": []
+    },
+    {
+      "id": "STD-03",
+      "room_type": "standart",
+      "min_guests": 1,
+      "max_guests": 3,
+      "view_type": "kara",
+      "bed_layout": "1 çift kişilik + 1 tek kişilik yatak",
+      "price_per_night": 3800,
+      "unavailable_dates": []
+    },
+    {
+      "id": "DLX-01",
+      "room_type": "deluxe",
+      "min_guests": 2,
+      "max_guests": 3,
+      "view_type": "deniz",
+      "bed_layout": "1 çift kişilik + 1 tek kişilik yatak",
+      "price_per_night": 6500,
+      "unavailable_dates": []
+    },
+    {
+      "id": "DLX-02",
+      "room_type": "deluxe",
+      "min_guests": 2,
+      "max_guests": 4,
+      "view_type": "kara",
+      "bed_layout": "2 çift kişilik yatak",
+      "price_per_night": 6000,
+      "unavailable_dates": [
+        "2026-08-01"
+      ]
+    },
+    {
+      "id": "DLX-03",
+      "room_type": "deluxe",
+      "min_guests": 2,
+      "max_guests": 4,
+      "view_type": "deniz",
+      "bed_layout": "2 çift kişilik yatak",
+      "price_per_night": 7200,
+      "unavailable_dates": []
+    },
+    {
+      "id": "SUIT-01",
+      "room_type": "suit",
+      "min_guests": 2,
+      "max_guests": 5,
+      "view_type": "deniz",
+      "bed_layout": "1 king yatak + 1 çekyat",
+      "price_per_night": 12000,
+      "unavailable_dates": []
+    },
+    {
+      "id": "SUIT-02",
+      "room_type": "suit",
+      "min_guests": 2,
+      "max_guests": 6,
+      "view_type": "bahçe",
+      "bed_layout": "2 çift kişilik + 1 çekyat",
+      "price_per_night": 11000,
+      "unavailable_dates": []
+    },
+    {
+      "id": "STD-01",
+      "room_type": "standartdel",
+      "min_guests": 1,
+      "max_guests": 2,
+      "view_type": "deniz",
+      "bed_layout": "1 çift kişilik yatak",
+      "price_per_night": 4000,
+      "unavailable_dates": [
+        "2026-07-20",
+        "2026-07-21"
+      ]
+    },
+    {
+      "id": "STD-02",
+      "room_type": "standart",
+      "min_guests": 1,
+      "max_guests": 2,
+      "view_type": "bahçe",
+      "bed_layout": "2 tek kişilik yatak",
+      "price_per_night": 3500,
+      "unavailable_dates": []
+    },
+    {
+      "id": "STD-03",
+      "room_type": "standart",
+      "min_guests": 1,
+      "max_guests": 3,
+      "view_type": "kara",
+      "bed_layout": "1 çift kişilik + 1 tek kişilik yatak",
+      "price_per_night": 3800,
+      "unavailable_dates": []
+    },
+    {
+      "id": "DLX-01",
+      "room_type": "deluxe",
+      "min_guests": 2,
+      "max_guests": 3,
+      "view_type": "deniz",
+      "bed_layout": "1 çift kişilik + 1 tek kişilik yatak",
+      "price_per_night": 6500,
+      "unavailable_dates": []
+    },
+    {
+      "id": "DLX-02",
+      "room_type": "deluxe",
+      "min_guests": 2,
+      "max_guests": 4,
+      "view_type": "kara",
+      "bed_layout": "2 çift kişilik yatak",
+      "price_per_night": 6000,
+      "unavailable_dates": [
+        "2026-08-01"
+      ]
+    },
+    {
+      "id": "DLX-03",
+      "room_type": "deluxe",
+      "min_guests": 2,
+      "max_guests": 4,
+      "view_type": "deniz",
+      "bed_layout": "2 çift kişilik yatak",
+      "price_per_night": 7200,
+      "unavailable_dates": []
+    },
+    {
+      "id": "SUIT-01",
+      "room_type": "suit",
+      "min_guests": 2,
+      "max_guests": 5,
+      "view_type": "deniz",
+      "bed_layout": "1 king yatak + 1 çekyat",
+      "price_per_night": 12000,
+      "unavailable_dates": []
+    },
+    {
+      "id": "SUIT-02",
+      "room_type": "suit",
+      "min_guests": 2,
+      "max_guests": 6,
+      "view_type": "bahçe",
+      "bed_layout": "2 çift kişilik + 1 çekyat",
+      "price_per_night": 11000,
+      "unavailable_dates": []
+    }
+  ]
+}

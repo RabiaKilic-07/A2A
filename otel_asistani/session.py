@@ -7,7 +7,7 @@ rezervasyona geri getir" talimatı ekleyerek nihai hedefi korur.
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .reservation_state import REQUIRED, ReservationState, missing_fields
+from .reservation_state import STAGE1_FIELDS, ReservationState, missing_fields
 
 
 @dataclass
@@ -25,7 +25,7 @@ class Session:
 def reservation_in_progress(session: Session) -> bool:
     """Başlamış ama tamamlanmamış bir rezervasyon var mı? (active_flow'dan bağımsız)"""
     s = session.reservation_state
-    started = bool(session.reservation_msgs) or any(getattr(s, f) is not None for f in REQUIRED)
+    started = bool(session.reservation_msgs) or any(getattr(s, f) is not None for f in STAGE1_FIELDS)
     return started and s.booking_id is None
 
 

@@ -1,0 +1,17 @@
+{
+  "otel_adi": "Deniz Otel",
+  "bilgiler": [
+    { "konu": "Wifi", "bilgi": "Tüm otelde ücretsizdir, şifre GUEST2026." },
+    { "konu": "Kahvaltı", "bilgi": "Saat 07:00-10:30 arası açık büfe olarak sunulur ve konaklamaya dahildir." },
+    { "konu": "Giriş ve çıkış saatleri", "bilgi": "Giriş saat 14:00, çıkış saat 12:00." },
+    { "konu": "Spa ve havuz", "bilgi": "Her gün 09:00-21:00 arası açıktır." },
+    { "konu": "Otopark", "bilgi": "Misafirler için ücretsizdir." },
+    { "konu": "Konum", "bilgi": "Sahile 200 metre mesafededir." },
+    { "konu": "Evcil hayvan", "bilgi": "Küçük ırk evcil hayvanlar kabul edilir, ek temizlik ücreti alınır." },
+    { "konu": "Restoran", "bilgi": "Akşam yemeği 19:00-22:00 arası a la carte olarak hizmet verir." },
+    { "konu": "Resepsiyon", "bilgi": "24 saat açıktır, dahili numara 0." },
+    { "konu": "İptal politikası", "bilgi": "Girişten 48 saat öncesine kadar ücretsiz iptal edilebilir." },
+    { "konu": "Fitness merkezi", "bilgi": "24 saat açıktır ve kullanımı ücretsizdir." },
+    { "konu": "Havaalanı transferi", "bilgi": "Ücretli olarak sağlanır, resepsiyondan talep edilir." }
+  ]
+}
