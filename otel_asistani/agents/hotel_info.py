@@ -8,7 +8,7 @@ import time
 
 from ..gemini_utils import user_content
 from ..hotel_info_db import lookup
-from ..session import Session
+from ..session import Session, missing_fields, reservation_in_progress
 
 HOTEL_DB_DELAY = 3.0   # saniye — DB'den veri geliyormuş gibi bekletme (set timeout benzeri)
 
@@ -16,4 +16,10 @@ HOTEL_DB_DELAY = 3.0   # saniye — DB'den veri geliyormuş gibi bekletme (set t
 def run_hotel_info(session: Session, user_text: str) -> str:
     session.hotel_info_msgs.append(user_content(user_text))
     time.sleep(HOTEL_DB_DELAY)       # DB'den veri geliyormuş gibi beklet
-    return lookup(user_text)         # mock DB'den veriyi çek (RAG yok)
+    reply = lookup(user_text)        # mock DB'den veriyi çek (RAG yok)
+    if reservation_in_progress(session):
+        if not missing_fields(session.reservation_state):
+            reply += "\n\nBu arada, onayınızı bekleyen bir rezervasyon işleminiz bulunuyor. Rezervasyon özetinizi onaylayarak tamamlamak ister misiniz?"
+        else:
+            reply += "\n\nBu arada, devam etmekte olan bir rezervasyon işleminiz bulunuyor. Kaldığımız yerden devam etmek ister misiniz?"
+    return reply

@@ -18,11 +18,12 @@ def _summarize_result(out: dict) -> str:
     if status == "no_match":
         return "no_match (uygun oda yok)"
     if status == "options":
-        return f"options ({len(out.get('options', []))} seçenek)"
+        groups = out.get("availability", {}).get("groups", [])
+        return f"options ({len(groups)} grup müsaitlik)"
     if status == "needs_confirmation":
         return "needs_confirmation (özet sunuldu, onay bekleniyor)"
     if status == "confirmed":
-        return f"confirmed booking={out.get('booking_id')} oda={out.get('room_id')}"
+        return f"confirmed booking={out.get('booking_id')}"
     return status
 
 

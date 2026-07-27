@@ -10,26 +10,26 @@ Orchestrator (router) --> reservation  (tools: check_availability, bed_options, 
                       --> chat          (genel sohbet / yedek akış)
 ```
 
-## Aşamalı rezervasyon akışı
-Rezervasyon 3 aşamada, adım adım toplanır:
+## Rezervasyon akışı
 
-1. **Aşama 1 — `check_availability`:** zorunlu 4 alanı toplar → giriş tarihi, çıkış tarihi,
-   toplam kişi sayısı, oda türü. Eksikse `incomplete`; 4'ü tamsa `stage1_ok`.
-2. **Aşama 2 — `bed_options`:** bu 4 filtreyle mock veritabanını sorgular ve uygun odaların
-   **manzara tipi + yatak dizilişi** seçeneklerini (fiyatlarıyla) kullanıcıya sunar.
-3. **Aşama 3 — `complete_reservation`:** kullanıcı bir seçeneği seçince, model seçimi (view_type +
-   bed_layout) bu araca vererek **anında state'e kaydeder** — böylece `missing_fields` seçim anında
-   güncellenir ve araya başka konu girse bile kaybolmaz (bu, ayrı bir tool ile değil **prompt** ile
-   yönetilir). Çocuk sayısı/yaşı alındıktan sonra tüm bilgileri **özetleyip onay ister**
-   (`needs_confirmation`); kullanıcı açıkça onaylayınca (`confirmed=true`) rezervasyonu kesinleştirir.
+1. **Aşama 1 — `check_availability`:** gerekli bilgileri **TEK seferde** toplar → giriş tarihi, çıkış
+   tarihi, kişi sayısı, oda türü (+ opsiyonel manzara tercihi ve çocuk bilgisi). Eksikse `incomplete`;
+   tamsa `stage1_ok`. **Kişi sayımı kuralı:** 12 yaşından **büyük** herkes `total_guests`, 12 yaş ve
+   **altı** ise `children_count` sayılır (asistan bunu kullanıcıya açıklar).
+2. **Aşama 2 — `bed_options`:** yatak dizilişi değil, **yerleşim planları** sunar — grubu odalara nasıl
+   yerleştirebileceğimizin seçenekleri: tek oda (gerekirse oda türü **yükseltilerek**) ya da grup
+   **bölünerek** birden çok oda (ör. iki adet iki kişilik oda). Sorgu manzarayı **filtre almaz**;
+   tercih edilen manzara **üstte**, diğerleri **altta** sıralanır.
+3. **Aşama 3 — `complete_reservation`:** kullanıcı bir planı seçince, model planın `plan_id`'sini
+   `arrangement` olarak verir. Çocuk bilgisi aşama-1'de alındığı için tüm bilgiler **özetlenip onay
+   istenir** (`needs_confirmation`); kullanıcı açıkça onaylayınca (`confirmed=true`) rezervasyon kesinleşir.
 
 ## Öne çıkan kod garantileri
-- **Aşama-1 zorunluluğu:** eksik 4 alanı model değil, kod (`stage1_missing`) bilir. Kullanıcı
-  erken fazladan bilgi verirse saklanır ama aşama-1 için zorunlu sayılmaz.
-- **Değişiklikte geri dönüş:** aşama-1 alanlarından biri değişirse sunulan seçenekler
+- **Aşama-1 zorunluluğu:** eksik 4 alanı model değil, kod (`stage1_missing`) bilir.
+- **Değişiklikte geri dönüş:** aşama-1 alanlarından biri değişirse sunulan planlar
   `stage1_fingerprint` ile geçersizleşir → `bed_options` yeniden çalıştırılmalı (`secenekler_gecersiz`).
-- **Uydurma seçim engeli:** seçilen (manzara + yatak dizilişi) veritabanında gerçekten yoksa
-  rezervasyon reddedilir (`gecersiz_secim`).
+- **Uydurma seçim engeli:** seçilen plan (`arrangement`) güncel girdiler için üretilen planlar
+  arasında yoksa rezervasyon reddedilir (`gecersiz_secim`) — plan, doğrulama sırasında yeniden üretilir.
 - **Onay kapısı:** rezervasyon, önce özet gösterilip kullanıcı açıkça onaylamadan yapılmaz.
   `full_fingerprint` sayesinde model özeti atlayıp kendi kendine onaylayamaz; özet sonrası bir bilgi
   değişirse onay eskir ve özet yenilenir.
@@ -48,7 +48,7 @@ otel_asistani/
 ├── __init__.py               # Genel bakış / mimari notları
 ├── config.py                 # Gemini istemcisi + model ayarı
 ├── reservation_state.py      # ReservationState + AŞAMALI doğrulama (sağlayıcıdan bağımsız)
-├── hotel_backend.py          # Mock envanter — data/rooms.json'u okur, 4 filtreyle sorgular
+├── hotel_backend.py          # Mock envanter — data/rooms.json'u okur, yerleşim planları üretir
 ├── hotel_info_db.py          # Mock otel bilgi tabanı — data/hotel_info.json'u anahtar kelimeyle sorgular
 ├── data/
 │   ├── rooms.json            # Mock veritabanı (oda konfigürasyonları)
@@ -70,7 +70,8 @@ otel_asistani/
 
 ## Mock veritabanı (`data/rooms.json`)
 Her satır bir oda konfigürasyonudur: `room_type`, kapasite (`min_guests`/`max_guests`),
-`view_type`, `bed_layout`, `price_per_night` ve `unavailable_dates` (dolu günler).
-`bed_options`, aşama-1 filtrelerine (oda türü + kapasite + tarih uygunluğu) göre bu satırları
-süzerek seçenekleri üretir. Gerçek envanter/DB ile değiştirin.
+`view_type`, `price_per_night` ve `unavailable_dates` (dolu günler).
+`bed_options`, tarih uygunluğu olan odalardan **yerleşim planları** üretir: her oda için grubu
+almak üzere kaç oda gerektiğini (`ceil(total_guests / max_guests)`) hesaplar → tek oda veya çok
+oda planı. Manzara/oda türü yalnızca sıralama tercihidir. Gerçek envanter/DB ile değiştirin.
 ```

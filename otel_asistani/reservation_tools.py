@@ -1,19 +1,16 @@
-"""Gemini fonksiyon (tool) tanımları ve handler'ları — AŞAMALI rezervasyon (3 tool).
+"""Gemini fonksiyon (tool) tanımları ve handler'ları — rezervasyon (3 tool).
 
-  1) check_availability : AŞAMA 1. Zorunlu 4 alanı (check_in, check_out, total_guests,
-     room_type) toplar/doğrular. Eksikse 'incomplete'; 4'ü tamsa 'stage1_ok' → bed_options çağır.
-  2) bed_options        : AŞAMA 2. 4 filtreyle DB'yi sorgular; (manzara + yatak dizilişi)
-     seçeneklerini kullanıcıya sunmak için döndürür ve aşama-1 parmak izini mühürler.
-  3) complete_reservation : AŞAMA 3. Seçilen (view_type, bed_layout)'ı çağrılınca state'e yazar;
-     çocuk bilgileriyle birlikte ÖZETLE + ONAYLAT + bitirir.
-
-Not: Kullanıcı seçim yapınca seçim, complete_reservation'a view_type/bed_layout verilerek kaydedilir
-(handler'daki _apply state'e yazar) — seçim için ayrı bir tool yoktur; akış prompt ile yönetilir.
+  1) check_availability : Aşama-1 girdilerini (check_in, check_out, total_guests, room_type) TEK
+     seferde toplar/doğrular. Eksikse 'incomplete'; tamsa 'stage1_ok' → bed_options çağır.
+  2) bed_options        : DB endpoint'inden (available_rooms) gruplanmış müsaitliği Gemini'ye verir.
+     Planlamayı (birebir uyum / öneri / oda bölme) GEMINI yapar; kod plan üretmez.
+  3) complete_reservation : Gemini'nin seçtiği KARMA planı (rooms listesi) DB'ye göre DOĞRULAR,
+     fiyatlar, ÖZETLER + ONAYLAR + bitirir.
 
 Kod garantileri:
   * check_availability, eksik aşama-1 alanlarını KODLA tespit eder (model değil).
-  * complete_reservation, aşama-1 alanlarının bed_options'tan beri DEĞİŞMEDİĞİNİ (fingerprint) ve
-    seçilen kombinasyonun DB'de gerçekten VAR olduğunu doğrular.
+  * complete_reservation, aşama-1 alanlarının bed_options'tan beri DEĞİŞMEDİĞİNİ (fingerprint) VE
+    seçilen (manzara + oda sayısı) planın DB'de MÜSAİT ve kapasitesinin YETERLİ olduğunu doğrular; onay kapısı.
 Handler'lar SAĞLAYICIDAN BAĞIMSIZ'dır (yalnızca state + hotel_backend kullanır).
 """
 
@@ -35,20 +32,26 @@ from .reservation_state import (
 _schemas = {
     "check_in":       types.Schema(type=types.Type.STRING,  description="Giriş tarihi (YYYY-MM-DD)"),
     "check_out":      types.Schema(type=types.Type.STRING,  description="Çıkış tarihi (YYYY-MM-DD)"),
-    "total_guests":   types.Schema(type=types.Type.INTEGER, description="Toplam kişi sayısı (yetişkin + çocuk)"),
-    "room_type":      types.Schema(type=types.Type.STRING,  description="Oda türü: standart/deluxe/suit"),
-    "view_type":      types.Schema(type=types.Type.STRING,  description="Manzara tipi — bed_options'ın SUNDUĞU seçeneklerden biri"),
-    "bed_layout":     types.Schema(type=types.Type.STRING,  description="Yatak dizilişi — bed_options'ın SUNDUĞU seçeneklerden biri"),
-    "children_count": types.Schema(type=types.Type.INTEGER, description="Çocuk sayısı (yoksa 0)"),
+    "total_guests":   types.Schema(type=types.Type.INTEGER, description="12 yaşından BÜYÜK kişi sayısı (12 yaş ve altı buraya DAHİL DEĞİL, çocuk sayılır)"),
+    "room_type":      types.Schema(type=types.Type.STRING,  description="İstenen oda türü: standart/deluxe/suit (DEĞİŞMEZ; farklı tür önerilmez)"),
+    "view_type":      types.Schema(type=types.Type.STRING,  description="Tercih edilen manzara (opsiyonel): deniz/kara/bahçe. Önceliklendirme için."),
+    "rooms":          types.Schema(type=types.Type.ARRAY,
+                                   description=("Seçilen KARMA plan: oda listesi. Her eleman {view_type, room_count}. "
+                                                "Farklı manzaralar BİRLİKTE olabilir (ör. 1 deniz + 1 bahçe)."),
+                                   items=types.Schema(type=types.Type.OBJECT, properties={
+                                       "view_type": types.Schema(type=types.Type.STRING, description="Bu odaların manzarası"),
+                                       "room_count": types.Schema(type=types.Type.INTEGER, description="Bu manzaradan kaç oda"),
+                                   })),
+    "children_count": types.Schema(type=types.Type.INTEGER, description="12 yaş ve ALTI çocuk sayısı (yoksa 0)"),
     "children_ages":  types.Schema(type=types.Type.ARRAY,   items=types.Schema(type=types.Type.INTEGER),
-                                   description="Her çocuğun yaşı (çocuk sayısı kadar)"),
+                                   description="12 yaş ve altı her çocuğun yaşı (children_count kadar)"),
     "confirmed":      types.Schema(type=types.Type.BOOLEAN,
                                    description="Kullanıcı özeti görüp AÇIKÇA onayladıysa true. Onay yoksa gönderme."),
 }
 
-_STAGE1 = ("check_in", "check_out", "total_guests", "room_type")
-_DATA = ("check_in", "check_out", "total_guests", "room_type",
-         "view_type", "bed_layout", "children_count", "children_ages")
+_STAGE1 = ("check_in", "check_out", "total_guests", "room_type")   # stage1_ok için zorunlu
+_INPUT = ("check_in", "check_out", "total_guests", "room_type",    # tüm ön bilgiler (tek seferde)
+          "view_type", "children_count", "children_ages")
 
 
 def _params(*names) -> types.Schema:
@@ -57,33 +60,34 @@ def _params(*names) -> types.Schema:
 
 check_availability_decl = types.FunctionDeclaration(
     name="check_availability",
-    description=("AŞAMA 1. Rezervasyonun zorunlu 4 alanını toplar/doğrular: giriş tarihi, çıkış "
-                "tarihi, toplam kişi sayısı, oda türü. Elindeki alanları ver — hepsini bilmesen de "
-                "çağır. Eksik varsa 'incomplete' + missing_fields döner (yalnızca bu 4 alan). 4'ü de "
-                "tamsa 'stage1_ok' döner; ARDINDAN bed_options'ı çağır. Kullanıcı fazladan bilgi "
-                "(manzara, çocuk vb.) verirse yine de gönder; saklanır ama aşama-1 için zorunlu değildir."),
-    parameters=_params(*_DATA),   # fazladan verilen bilgiler kaybolmasın diye tüm alanlar opsiyonel
+    description=("AŞAMA 1. Gerekli bilgileri TEK seferde toplar/doğrular: giriş tarihi, çıkış tarihi, "
+                "kişi sayısı (total_guests = 12 yaş ÜSTÜ), oda türü. Varsa manzara tercihini (view_type) "
+                "ve çocuk bilgisini (children_count/children_ages, 12 yaş ve altı) de aynı çağrıda gönder. "
+                "Eksik varsa 'incomplete' + missing_fields döner (4 zorunlu alan). Tamsa 'stage1_ok' → "
+                "ARDINDAN bed_options'ı çağır."),
+    parameters=_params(*_INPUT),
 )
 
 bed_options_decl = types.FunctionDeclaration(
     name="bed_options",
-    description=("AŞAMA 2. Aşama-1'in 4 filtresine göre veritabanını sorgular ve uygun odaların "
-                "MANZARA TİPİ + YATAK DİZİLİŞİ seçeneklerini (fiyatlarıyla) döndürür. Bu seçenekleri "
-                "kullanıcıya sun ve birini seçmesini iste. YALNIZCA check_availability 'stage1_ok' "
-                "döndükten sonra çağır. Aşama-1 alanları eksikse 'incomplete' döner."),
-    parameters=_params(*_STAGE1),
+    description=("AŞAMA 2. İstenen oda türü + tarih için MÜSAİTLİK verisini döndürür: her (manzara, "
+                "kapasite) grubu için kaç adet oda olduğu ve gecelik fiyat. Planlamayı SEN yaparsın: "
+                "kullanıcının istediği manzarada, tek odaya sığan bir grup varsa (max_guests >= kişi "
+                "sayısı) BİREBİR odur → yalnızca onu öner. Yoksa bu veriye göre öneride bulun: aynı türde "
+                "farklı manzara ya da odayı BÖLME (yeterli sayıda oda varsa). YALNIZCA check_availability "
+                "'stage1_ok' döndükten sonra çağır."),
+    parameters=_params("check_in", "check_out", "total_guests", "room_type", "view_type"),
 )
 
 complete_reservation_decl = types.FunctionDeclaration(
     name="complete_reservation",
-    description=("AŞAMA 3. Rezervasyonu KAYDET / ÖZETLE / ONAYLAT. Kullanıcı bir seçenek seçince, "
-                "seçtiği view_type ve bed_layout'ı BU ARACA vererek seçimi kaydet — çocuk bilgisi "
-                "henüz yoksa da çağır: araç 'cocuk_bilgisi_eksik' dönerse (seçim yine de kaydedilmiştir) "
-                "çocuk sayısını sor. Tüm bilgiler tamsa confirmed OLMADAN çağır: 'needs_confirmation' + "
-                "summary döner → özeti sun ve onay iste. Kullanıcı AÇIKÇA onaylayınca confirmed=true ile "
-                "TEKRAR çağır → 'confirmed' + booking_id. Aşama-1 alanları bed_options'tan beri "
-                "değiştiyse 'secenekler_gecersiz' döner."),
-    parameters=_params(*_DATA, "confirmed"),
+    description=("AŞAMA 3. Kullanıcı bir öneri seçince, seçilen odaları 'rooms' listesiyle ver "
+                "([{view_type, room_count}, ...]; farklı manzaralar birlikte olabilir) ve confirmed "
+                "OLMADAN çağır: araç seçimi DB'ye göre doğrular, fiyatlar ve 'needs_confirmation' + summary "
+                "döner → özeti sun ve onay iste. Kullanıcı AÇIKÇA onaylayınca confirmed=true ile TEKRAR çağır "
+                "→ 'confirmed' + booking_id. Aşama-1 değiştiyse 'secenekler_gecersiz'; seçim müsait/kapasite "
+                "yetersizse 'gecersiz_secim'."),
+    parameters=_params(*_INPUT, "rooms", "confirmed"),
 )
 
 RESERVATION_TOOL = types.Tool(
@@ -99,18 +103,18 @@ def _apply(state: ReservationState, kwargs: dict) -> None:
 
 def check_availability(state: ReservationState, **kwargs) -> dict:
     _apply(state, kwargs)
-    state.options_offered_for = None               # aşama-1 yeniden ele alınıyor → eski seçenekleri geçersiz kıl
+    state.options_offered_for = None               # aşama-1 yeniden ele alınıyor → eski planları geçersiz kıl
 
     missing = stage1_missing(state)
     if missing:
         return {"status": "incomplete", "missing_fields": missing}
 
-    if not hotel_backend.search_options(
-        check_in=state.check_in, check_out=state.check_out,
-        total_guests=state.total_guests, room_type=state.room_type,
-    ):
+    # İstenen ODA TÜRÜNDEN, bu tarih için müsait oda var mı?
+    if not hotel_backend.available_rooms(
+        check_in=state.check_in, check_out=state.check_out, room_type=state.room_type,
+    )["groups"]:
         return {"status": "no_match",
-                "message": "Bu tarih/kişi sayısı/oda türü için uygun oda yok. Bilgileri güncelleyin."}
+                "message": "Bu tarih için istenen oda türünden müsait oda yok. Bilgileri güncelleyin."}
 
     return {"status": "stage1_ok", "next": "bed_options"}
 
@@ -123,17 +127,26 @@ def bed_options(state: ReservationState, **kwargs) -> dict:
         state.options_offered_for = None
         return {"status": "incomplete", "missing_fields": missing}
 
-    options = hotel_backend.search_options(
-        check_in=state.check_in, check_out=state.check_out,
-        total_guests=state.total_guests, room_type=state.room_type,
+    # DB endpoint'inden gruplanmış müsaitlik (kişi sayısı KULLANILMAZ) → planlamayı Gemini yapar.
+    availability = hotel_backend.available_rooms(
+        check_in=state.check_in, check_out=state.check_out, room_type=state.room_type,
     )
-    if not options:
+    if not availability["groups"]:
         state.options_offered_for = None
         return {"status": "no_match",
-                "message": "Bu 4 filtre için uygun oda bulunamadı. Bilgileri güncelleyin."}
+                "message": "Bu tarih için istenen oda türünden müsait oda yok. Bilgileri güncelleyin."}
 
-    state.options_offered_for = stage1_fingerprint(state)   # seçenekleri O filtrelere mühürle
-    return {"status": "options", "options": options}
+    state.options_offered_for = stage1_fingerprint(state)   # müsaitliği O aşama-1 girdisine mühürle
+    return {
+        "status": "options",
+        "total_guests": state.total_guests,
+        "availability": availability,
+        "message": ("Bu MÜSAİTLİK verisine göre planla. İstenen manzarada tek odaya sığan bir grup varsa "
+                    "(max_guests >= kişi sayısı, count >= 1) BİREBİR odur → yalnızca onu öner. Yoksa: aynı "
+                    "türde farklı manzara ya da odayı BÖL (bir grubu birden çok oda seçerek; oda sayısı o "
+                    "grubun count'unu aşamaz). İstenen manzarada yeterli oda yoksa o manzaradan alıp KALANI "
+                    "başka manzaradan tamamla (karma). Kullanıcı seçince complete_reservation'ı rooms listesiyle çağır."),
+    }
 
 
 def _nights(check_in, check_out):
@@ -143,18 +156,19 @@ def _nights(check_in, check_out):
         return None
 
 
-def _build_summary(state: ReservationState, room: dict) -> dict:
-    """Kullanıcıya sunulacak rezervasyon özeti (kod tarafında derlenir, uydurulmaz)."""
-    price = room["price_per_night"]
+def _build_summary(state: ReservationState, plan: dict) -> dict:
+    """Kullanıcıya sunulacak rezervasyon özeti (kod tarafında, doğrulanan KARMA plandan derlenir)."""
+    price = plan["price_per_night"]                        # tüm odalar için gecelik toplam
     summary = {
         "check_in": state.check_in,
         "check_out": state.check_out,
         "total_guests": state.total_guests,
-        "room_type": state.room_type,
-        "view_type": state.view_type,
-        "bed_layout": state.bed_layout,
         "children_count": state.children_count,
         "children_ages": state.children_ages or [],
+        "room_type": state.room_type,
+        "rooms": [{"view_type": r["view_type"], "room_count": r["room_count"],
+                   "per_room_capacity": r["max_guests"]} for r in plan["rooms"]],
+        "total_capacity": plan["capacity"],
         "price_per_night": price,
     }
     nights = _nights(state.check_in, state.check_out)
@@ -165,8 +179,14 @@ def _build_summary(state: ReservationState, room: dict) -> dict:
 
 
 def complete_reservation(state: ReservationState, **kwargs) -> dict:
-    confirmed = bool(kwargs.pop("confirmed", False))   # confirmed state alanı değil → ayrı ele al
+    confirmed = bool(kwargs.pop("confirmed", False))       # confirmed state alanı değil → ayrı ele al
+    rooms = kwargs.pop("rooms", None)                      # seçim = karma oda listesi
     _apply(state, kwargs)
+    if rooms is not None:                                  # seçimi kaydet (araya konu girse kaybolmasın)
+        state.selected_rooms = sorted(
+            [{"view_type": r.get("view_type"), "room_count": r.get("room_count")} for r in rooms],
+            key=lambda r: str(r.get("view_type") or "").lower(),
+        )
 
     if stage1_missing(state):
         return {"is_error": True, "error": "asama1_eksik", "missing_fields": stage1_missing(state)}
@@ -180,27 +200,26 @@ def complete_reservation(state: ReservationState, **kwargs) -> dict:
 
     if selection_missing(state):
         return {"is_error": True, "error": "secim_yapilmadi", "missing_fields": selection_missing(state),
-                "message": "Kullanıcı sunulan manzara + yatak dizilişi seçeneklerinden birini seçmeli."}
+                "message": "Kullanıcı bir öneri seçmeli: rooms = [{view_type, room_count}, ...]."}
 
     if children_missing(state):
         return {"is_error": True, "error": "cocuk_bilgisi_eksik", "missing_fields": children_missing(state)}
 
-    # GARANTİ 2: seçilen (manzara + yatak dizilişi) bu filtreler için DB'de gerçekten var mı?
-    room = hotel_backend.find_room(
+    # GARANTİ 2: seçilen KARMA plan DB'de müsait ve toplam kapasitesi yeterli mi?
+    plan = hotel_backend.price_plan(
+        state.selected_rooms,
         check_in=state.check_in, check_out=state.check_out,
-        total_guests=state.total_guests, room_type=state.room_type,
-        view_type=state.view_type, bed_layout=state.bed_layout,
+        room_type=state.room_type, total_guests=state.total_guests,
     )
-    if room is None:
+    if plan is None:
         state.confirmation_pending_for = None
         return {"is_error": True, "error": "gecersiz_secim",
-                "message": "Seçilen manzara/yatak dizilişi bu filtreler için mevcut değil. bed_options'ı tekrar çalıştırın."}
+                "message": ("Seçilen oda(lar) için yeterli müsait oda yok ya da toplam kapasite yetmiyor. "
+                            "bed_options müsaitliğine göre yeniden öner/seç.")}
 
-    summary = _build_summary(state, room)
+    summary = _build_summary(state, plan)
 
     # GARANTİ 3 (ONAY KAPISI): önce özet gösterilip kullanıcı AÇIKÇA onaylamadan rezervasyon YAPILMAZ.
-    # confirmed=true olsa bile, özetin gösterildiği TAM bilgilere ait bir onay damgası şart —
-    # böylece model özeti sunmadan kendi kendine onaylayıp geçemez, bilgi değişince onay eskir.
     if not confirmed or state.confirmation_pending_for != full_fingerprint(state):
         state.confirmation_pending_for = full_fingerprint(state)
         return {"status": "needs_confirmation", "summary": summary,
@@ -208,11 +227,11 @@ def complete_reservation(state: ReservationState, **kwargs) -> dict:
                             "Kullanıcı açıkça onaylarsa complete_reservation'ı confirmed=true ile TEKRAR çağır. "
                             "Bir bilgiyi değiştirmek isterse ilgili aşamaya dön.")}
 
-    booking = hotel_backend.book(room)
+    booking = hotel_backend.book()
     state.booking_id = booking.id
     state.options_offered_for = None
     state.confirmation_pending_for = None
-    return {"status": "confirmed", "booking_id": booking.id, "room_id": booking.room_id, "summary": summary}
+    return {"status": "confirmed", "booking_id": booking.id, "summary": summary}
 
 
 def dispatch(state: ReservationState, name: str, tool_input: dict) -> dict:
