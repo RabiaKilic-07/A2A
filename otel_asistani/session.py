@@ -12,7 +12,7 @@ from .reservation_state import STAGE1_FIELDS, ReservationState, missing_fields
 
 @dataclass
 class Session:
-    active_flow: Optional[str] = None          # None | "reservation" | "complaint"
+    active_flow: Optional[str] = None          # None | "reservation" | "complaint" | "hotel_info" | "chat"
     reservation_msgs: list = field(default_factory=list)
     complaint_msgs: list = field(default_factory=list)
     hotel_info_msgs: list = field(default_factory=list)
@@ -20,6 +20,17 @@ class Session:
     reservation_state: ReservationState = field(default_factory=ReservationState)
     last_target: Optional[str] = None                       # bu turda seçilen akış
     turn_tool_log: list = field(default_factory=list)       # bu turda çağrılan tool'lar
+    turn_tokens: int = 0                                    # bu turda harcanan token
+    total_tokens: int = 0                                   # toplam harcanan token
+
+
+def record_usage(session: Session, response) -> None:
+    """Gemini API yanıtından harcanan token sayısını oturuma kaydeder."""
+    usage = getattr(response, "usage_metadata", None)
+    if usage and getattr(usage, "total_token_count", None):
+        count = usage.total_token_count
+        session.turn_tokens += count
+        session.total_tokens += count
 
 
 def reservation_in_progress(session: Session) -> bool:

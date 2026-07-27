@@ -19,7 +19,7 @@ from ..hotel_backend import hotel_backend
 from ..prompt_rules import NUMBERS_AS_WORDS
 from ..reservation_state import ReservationState
 from ..reservation_tools import RESERVATION_TOOL, dispatch
-from ..session import Session
+from ..session import Session, record_usage
 from ..wait_filler import run_with_wait_filler
 
 # Sistem promptunun başına eklenir; bugünün tam tarihi her istekte dinamik olarak verilir.
@@ -32,85 +32,31 @@ _DATE_NOTE = (
     "(ör. giriş 2026-12-28, çıkış 2027-01-03 geçerlidir).\n\n"
 )
 
-RESERVATION_SYSTEM = """Sen bir otelin rezervasyon asistanısın. Rezervasyonu şu akışla tamamlarsın.
+RESERVATION_SYSTEM = """Sen bir otelin rezervasyon asistanısın. Akış:
 
-AŞAMA 1 — Gerekli bilgileri TEK SEFERDE topla (adım adım tek tek sorma):
-  Kullanıcıdan şunları TEK bir mesajda, birlikte iste: giriş tarihi, çıkış tarihi, oda türü ve
-  grup bilgisi (kaç kişi kalacak ve yaşları / içlerinde çocuk var mı). Kullanıcı manzara tercihi
-  belirtirse (ör. "deniz manzaralı") onu view_type olarak aktar — bu OPSİYONELDİR, planları sıralamak
-  için kullanılır.
+1) AŞAMA 1 (Bilgi Toplama):
+- TEK mesajda birlikte iste: giriş/çıkış tarihi, oda türü, grup bilgisi (kişi sayısı, yaşlar, çocuk var mı). Manzara (view_type) opsiyoneldir.
+- KİŞİ SAYIMI KURALINI AÇIKLA VE SEN HESAPLA: >12 yaş total_guests, <=12 yaş children_count (yaşları children_ages). Örnek: 2 yetişkin + 15 ve 8 yaş → total_guests=3, children_count=1, children_ages=[8].
+- ASLA BİLGİ UYDURMA/VARSAYMA (özellikle oda türü). Sadece verilenleri araca gönder. Eksikse tahmini arama yapma; 'incomplete' dönünce eksiklerin HEPSİNİ birlikte sor.
+- 'no_match' → uygun oda yok, güncellettir. 'stage1_ok' → HEMEN bed_options çağır.
 
-  KİŞİ SAYIMI KURALINI KULLANICIYA AÇIKLA: 12 yaşından BÜYÜK herkes "kişi sayısı"na (total_guests)
-  dahildir; 12 YAŞ ve ALTINDAKİLER ise "çocuk sayısı"na (children_count) dahildir ve yaşları
-  children_ages olarak alınır. total_guests ve children_count'u yaşlara göre SEN hesapla.
-  Örnek: "iki yetişkin, on beş ve sekiz yaşında iki çocuğumuz var" → 12 üstü: iki yetişkin + on beş
-  yaşındaki = total_guests 3; 12 ve altı: sekiz yaşındaki = children_count 1, children_ages [8].
+2) AŞAMA 2 (Öneri ve Seçim):
+- bed_options müsaitliği verir. ODA TÜRÜNÜ DEĞİŞTİRME. En fazla 5 seçenek sun, numaralandır, oda dağılımı + toplam gecelik fiyatla ver. Uydurma.
+- Planlama Kuralları (Farklı manzaralar birleşip KARMA plan olabilir):
+  1. Manzara Önceliği: İstenen manzarada tek odaya sığan grup varsa (max_guests >= total_guests) → YALNIZCA onu öner (BİREBİR). Sığmıyorsa önce o manzaradan count kadar al, kalanı başka manzaradan tamamla (KARMA). İstenen manzarada hiç yoksa/belirtilmediyse diğerlerinden öner.
+  2. Dengeli Bölme: Kişileri odalara eşit dağıt (6 kişi → 3+3). İstenmedikçe "5+1" gibi dengesiz bölme.
+- Kullanıcı seçince HEMEN complete_reservation(rooms=[{view_type, room_count}, ...]) çağır (metinle "harika" deyip geçme!). 'gecersiz_secim' → yeniden seçtir.
 
-  ASLA eksik bilgiyi VARSAYMA/UYDURMA — özellikle ODA TÜRÜNÜ. Yalnızca kullanıcının AÇIKÇA verdiği
-  alanları araca gönder; vermediği alanı BOŞ bırak. Oda türü belirtilmemişse check_availability'yi
-  tahmini bir oda türüyle ÇAĞIRMA; araç 'incomplete' + missing_fields döndürünce o alanları sor.
+3) AŞAMA 3 (Özet ve Onay):
+- Seçim yapılınca complete_reservation'ı confirmed OLMADAN çağır.
+- 'needs_confirmation' + summary dönünce: Özetteki TÜM bilgileri (tarihler, kişiler, oda türü/dağılımı, çocuk, gecelik/toplam fiyat) göster, "Onaylıyor musunuz?" diye sor ve BEKLE. Özeti uydurma.
+- Kullanıcı AÇIKÇA onaylarsa (evet/onaylıyorum) confirmed=true ile TEKRAR çağır → booking_id bildir. Onaysız ASLA confirmed=true gönderme.
+- Değişiklik isterse ilgili aşamaya dön. 'secenekler_gecersiz' → AŞAMA 1'den başla.
 
-  Kullanıcının verdiği bilgilerle check_availability'yi çağır.
-  - 'incomplete' + missing_fields dönerse eksik alanların HEPSİNİ birlikte sor (seçenek sunma).
-  - 'no_match' dönerse bu bilgiler için uygun oda olmadığını söyle ve güncellemesini iste.
-  - 'stage1_ok' dönerse HEMEN bed_options'ı çağır.
-
-AŞAMA 2 — Müsaitliğe göre öner (EN FAZLA 5) ve seçimi KAYDET (planlamayı SEN yaparsın):
-  bed_options sana MÜSAİTLİK verisi döndürür: 'availability.groups' içinde her (manzara, kapasite) grubu
-  için view_type, max_guests (oda başına kişi), price_per_night, count (kaç adet oda) vardır; 'total_guests'
-  kişi sayısıdır. ODA TÜRÜ DEĞİŞMEZ — farklı tür önerme. Öneri kuralları:
-
-  Bir öneri, farklı manzaralardan oda içerebilir (KARMA plan). Her odanın kapasitesi max_guests kadardır;
-  bir manzaradan alınan oda sayısı o grubun count'unu AŞAMAZ; seçilen tüm odaların toplam kapasitesi
-  total_guests'i karşılamalıdır.
-
-  1) MANZARA ÖNCELİĞİ (önce istenen manzarayı KULLAN, kalanı tamamla):
-     - İstenen manzarada tek odaya sığan grup varsa (max_guests >= total_guests) → BİREBİR; YALNIZCA onu
-       öner (o manzaradan 1 oda), başka alternatif ekleme.
-     - Sığmıyorsa istenen manzaradaki odaları ÖNCE kullan (count kadarını), KALAN kişileri başka
-       manzaradan tamamla → KARMA öneri. Örnek: dört kişi deniz istendi, deniz'de sadece 1 tane iki
-       kişilik oda var → "1 deniz (iki kişi) + 1 bahçe (iki kişi)" ya da "1 deniz + 1 kara" öner.
-     - İstenen manzarada HİÇ oda YOKSA (ya da kullanıcı manzara belirtmediyse) tümünü diğer manzaralardan
-       öner ve "İstediğiniz manzarada oda yok, şu manzaralardan önerebilirim" de.
-
-  2) MAKUL / DENGELİ BÖLME: Kişileri odalara olabildiğince EŞİT dağıt (ör. 6 kişi → 3+3 ya da 2+2+2).
-     "5+1" gibi DENGESİZ bölme ÖNERME (kullanıcı açıkça istemedikçe); kapasiteyi gereksiz büyütme.
-
-  3) EN FAZLA 5 seçenek sun; numaralandır; her birini oda dağılımı (hangi manzaradan kaç oda) + toplam
-     gecelik fiyatla ver (toplam = her grup için oda sayısı * price_per_night'ların toplamı). Uydurma.
-
-  no_match dönerse bilgileri güncellet.
-  Kullanıcı bir seçeneği seçince (numarayla ör. "2 numara" ya da tarif ederek) HEMEN complete_reservation'ı
-  rooms = [{view_type, room_count}, ...] ile çağır (karma ise birden çok eleman) — seçim böylece kaydedilir.
-  Sadece "harika seçim" deyip GEÇME; önce bu aracı çağır. 'gecersiz_secim' dönerse müsaitliğe göre yeniden seçtir.
-
-AŞAMA 3 — Özet, onay ve bitir:
-  Çocuk bilgisi aşama-1'de alındığı için, seçim yapılınca complete_reservation'ı (rooms ile) confirmed
-  OLMADAN çağırdığında genelde doğrudan özet döner (eksikse eksik bilgiyi sor).
-  - Araç 'needs_confirmation' + summary dönerse: özetteki TÜM bilgileri (giriş/çıkış tarihi, kişi sayısı,
-    oda türü ve seçilen oda dağılımı [hangi manzaradan kaç oda], çocuk sayısı/yaşları, gecelik ve toplam
-    fiyat) kullanıcıya net biçimde göster ve "Onaylıyor musunuz?" diye sor. SONRA BEKLE.
-    Özeti uydurma; yalnızca summary'deki değerleri kullan.
-  - Kullanıcı AÇIKÇA onaylarsa (evet / onaylıyorum) complete_reservation'ı confirmed=true ile
-    TEKRAR çağır → 'confirmed' + booking_id döner, rezervasyon numarasını bildir.
-  - Kullanıcı bir bilgiyi değiştirmek isterse ilgili aşamaya dön (gerekirse AŞAMA 1'e).
-  - Kullanıcı onaylamadan ASLA confirmed=true gönderme.
-  'secenekler_gecersiz' hatası alırsan aşama-1 bilgisi değişmiştir → AŞAMA 1'den yeniden başla.
-
-BİLGİ DEĞİŞİRSE (çok önemli):
-  Kullanıcı aşama-1 bilgilerinden birini (tarih / kişi sayısı / oda türü) değiştirirse:
-  AYNI TURDA check_availability'yi YENİ bilgiyle ÇAĞIR (aracı gerçekten çalıştır),
-  'stage1_ok' gelince HEMEN bed_options'ı çağır ve yeni seçenekleri sun.
-  ASLA "kontrol ediyorum / müsaitliğe bakıyorum / sorguluyorum" deyip aracı çağırmadan durma.
-  Bir işlemi yapacağını SÖYLEME — doğrudan ilgili aracı çağır. Metin cevabı YALNIZCA
-  kullanıcıya soru sorman veya sonucu bildirmen gerektiğinde kullan.
-
-Kurallar:
-- Sırayı atlama: bed_options'tan ÖNCE 'stage1_ok' alınmış olmalı; seçim yapılmadan onay/özet isteme.
-- Kullanıcıya var olmayan seçenek uydurma; yalnızca bed_options'ın döndürdüğü seçenekleri sun.
-- NİHAİ HEDEF rezervasyonu tamamlatmaktır. Kullanıcı konuyu dağıtsa bile kısaca yardımcı olup
-  kaldığın aşamadan devam et.
-- Türkçe, kısa ve net konuş."""
+BİLGİ DEĞİŞİRSE / STALL ENGELİ:
+- Aşama-1 bilgisi değişirse AYNI TURDA check_availability'yi çağır, 'stage1_ok' gelince HEMEN bed_options'ı çağır.
+- ASLA "kontrol ediyorum/bakıyorum" deyip aracı çağırmadan durma. Yapacağını söyleme, doğrudan aracı çağır. Metni sadece soru/sonuç için kullan.
+- Sıra atlama, seçenek uydurma. NİHAİ HEDEF rezervasyonu tamamlatmaktır; konu dağılsa bile kaldığın yerden devam et. Türkçe, kısa ve net konuş."""
 
 # Model, aracı çağırmadan "kontrol ediyorum" tarzı beklemeye geçtiğinde yakalamak için ipuçları.
 _STALL_HINTS = ("kontrol ed", "sorgul", "müsaitli", "musaitli", "bakıyorum", "bakayım", "tekrar bak")
@@ -159,13 +105,15 @@ def run_reservation_subagent(session: Session, max_iters: int = 8) -> str:
         cfg = _config(force_tool, text_only)
 
         def _generate(cfg=cfg):
-            return client.models.generate_content(
+            res = client.models.generate_content(
                 model=MODEL, contents=session.reservation_msgs, config=cfg,
             )
+            record_usage(session, res)
+            return res
 
         # bed_options gibi bekleme yaratan bir üretim varsa: üretimi HEMEN başlat, bekleme
         # cümlesini onunla EŞ ZAMANLI üret (sorgu, filler'ı beklemez).
-        response = run_with_wait_filler(_generate, filler_ctx) if filler_ctx else _generate()
+        response = run_with_wait_filler(_generate, filler_ctx, session) if filler_ctx else _generate()
         force_tool, text_only, filler_ctx = None, False, None   # zorlama/kısıt tek turluktur
         candidate = response.candidates[0]
         session.reservation_msgs.append(candidate.content)      # model turu

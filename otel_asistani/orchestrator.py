@@ -17,6 +17,7 @@ from .session import Session
 
 def handle_user_turn(session: Session, user_text: str) -> str:
     session.turn_tool_log = []                              # her tur logu sıfırla
+    session.turn_tokens = 0                                 # her tur token sayaç sıfırla
     target = route(session, user_text)
     session.last_target = target
 

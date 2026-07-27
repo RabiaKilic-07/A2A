@@ -11,11 +11,13 @@ filler ayrı, kısa bir üretimle önceden oluşturulur.)
 
 import concurrent.futures
 
+from typing import Optional
 from google.genai import types
 
 from .config import MODEL, client
 from .gemini_utils import content_text
 from .prompt_rules import NUMBERS_AS_WORDS
+from .session import Session, record_usage
 
 _FILLER_SYSTEM = (
     "Görevin: kısa bir sorgulama/bilgi getirme işlemi yapılırken kullanıcının beklemesini "
@@ -26,7 +28,7 @@ _FILLER_SYSTEM = (
 )
 
 
-def make_wait_filler(context: str) -> str:
+def make_wait_filler(context: str, session: Optional[Session] = None) -> str:
     """Verilen bağlama göre kısa bir bekleme cümlesi üretir (üretilemezse boş döner).
 
     Düşünme (thinking) KAPALI (thinking_budget=0): model, muhakemesini çıktıya dökmeden
@@ -41,19 +43,21 @@ def make_wait_filler(context: str) -> str:
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
+        if session:
+            record_usage(session, response)
         return content_text(response.candidates[0].content)
     except Exception:
         return ""   # filler kritik değil; başarısız olursa akışı durdurma
 
 
-def run_with_wait_filler(work, context: str):
+def run_with_wait_filler(work, context: str, session: Optional[Session] = None):
     """`work`'ü (argümansız çağrılabilir ağır işlem: sorgu/üretim) HEMEN arka planda başlatır;
     bu SIRADA bağlama göre bir bekleme cümlesi üretip kullanıcıya iletir; sonra work sonucunu
     döndürür. Böylece sorgu, filler üretimini BEKLEMEDEN — onunla eş zamanlı — başlamış olur.
     """
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(work)          # ağır işlem HEMEN başlar (filler'ı beklemez)
-        filler = make_wait_filler(context)  # sorgu sürerken eş zamanlı üretilir
+        filler = make_wait_filler(context, session)  # sorgu sürerken eş zamanlı üretilir
         if filler:
             print(f"\nAsistan: {filler}")
         return future.result()              # işlem sonucunu döndür (hata olursa yayılır)

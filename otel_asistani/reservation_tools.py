@@ -60,33 +60,27 @@ def _params(*names) -> types.Schema:
 
 check_availability_decl = types.FunctionDeclaration(
     name="check_availability",
-    description=("AŞAMA 1. Gerekli bilgileri TEK seferde toplar/doğrular: giriş tarihi, çıkış tarihi, "
-                "kişi sayısı (total_guests = 12 yaş ÜSTÜ), oda türü. Varsa manzara tercihini (view_type) "
-                "ve çocuk bilgisini (children_count/children_ages, 12 yaş ve altı) de aynı çağrıda gönder. "
-                "Eksik varsa 'incomplete' + missing_fields döner (4 zorunlu alan). Tamsa 'stage1_ok' → "
-                "ARDINDAN bed_options'ı çağır."),
+    description=("AŞAMA 1. Giriş/çıkış tarihi, kişi sayısı (total_guests: >12 yaş) ve oda türünü TEK seferde topla/doğrula. "
+                 "Varsa manzara (view_type) ve çocuk (children_count/children_ages: <=12 yaş) bilgisini de ekle. "
+                 "Eksikse 'incomplete' + missing_fields, tamsa 'stage1_ok' döner → ardından bed_options'ı çağır."),
     parameters=_params(*_INPUT),
 )
 
 bed_options_decl = types.FunctionDeclaration(
     name="bed_options",
-    description=("AŞAMA 2. İstenen oda türü + tarih için MÜSAİTLİK verisini döndürür: her (manzara, "
-                "kapasite) grubu için kaç adet oda olduğu ve gecelik fiyat. Planlamayı SEN yaparsın: "
-                "kullanıcının istediği manzarada, tek odaya sığan bir grup varsa (max_guests >= kişi "
-                "sayısı) BİREBİR odur → yalnızca onu öner. Yoksa bu veriye göre öneride bulun: aynı türde "
-                "farklı manzara ya da odayı BÖLME (yeterli sayıda oda varsa). YALNIZCA check_availability "
-                "'stage1_ok' döndükten sonra çağır."),
+    description=("AŞAMA 2. Tarih/oda türü için müsaitliği (manzara, kapasite, oda sayısı, gecelik fiyat) döndürür. "
+                 "Planlamayı sen yap: İstenen manzarada tek odaya sığan grup varsa (max_guests >= kişi sayısı) "
+                 "yalnızca onu öner (BİREBİR). Yoksa farklı manzara veya odayı bölerek (karma) öner. "
+                 "YALNIZCA 'stage1_ok' alındıktan sonra çağır."),
     parameters=_params("check_in", "check_out", "total_guests", "room_type", "view_type"),
 )
 
 complete_reservation_decl = types.FunctionDeclaration(
     name="complete_reservation",
-    description=("AŞAMA 3. Kullanıcı bir öneri seçince, seçilen odaları 'rooms' listesiyle ver "
-                "([{view_type, room_count}, ...]; farklı manzaralar birlikte olabilir) ve confirmed "
-                "OLMADAN çağır: araç seçimi DB'ye göre doğrular, fiyatlar ve 'needs_confirmation' + summary "
-                "döner → özeti sun ve onay iste. Kullanıcı AÇIKÇA onaylayınca confirmed=true ile TEKRAR çağır "
-                "→ 'confirmed' + booking_id. Aşama-1 değiştiyse 'secenekler_gecersiz'; seçim müsait/kapasite "
-                "yetersizse 'gecersiz_secim'."),
+    description=("AŞAMA 3. Seçilen odaları 'rooms' ([{view_type, room_count}, ...]) ile confirmed OLMADAN çağır: "
+                 "seçim DB'de doğrulanır, 'needs_confirmation' + summary döner → özeti sun ve onay iste. "
+                 "Kullanıcı açıkça onaylayınca confirmed=true ile TEKRAR çağır → 'confirmed' + booking_id döner. "
+                 "Hata durumları: 'secenekler_gecersiz' (aşama-1 değişti) veya 'gecersiz_secim' (kapasite/müsaitlik yetersiz)."),
     parameters=_params(*_INPUT, "rooms", "confirmed"),
 )
 

@@ -61,4 +61,5 @@ def main() -> None:
         _print_tool_log(session)
         print(f"[debug] active_flow={session.active_flow} "
               f"eksik={missing_fields(session.reservation_state)} "
-              f"booking={session.reservation_state.booking_id}\n")
+              f"booking={session.reservation_state.booking_id}")
+        print(f"[token] Bu mesaj için: {session.turn_tokens} token | Toplam: {session.total_tokens} token\n")

@@ -11,7 +11,7 @@ from google.genai import types
 
 from ..config import MODEL, client
 from ..gemini_utils import last_model_question
-from ..session import Session
+from ..session import Session, record_usage
 
 
 class RouteDecision(BaseModel):
@@ -55,6 +55,7 @@ def route(session: Session, user_text: str) -> str:
             response_schema=RouteDecision,      # structured output → target garantili enum
         ),
     )
+    record_usage(session, response)
     decision = response.parsed
     if decision is None:
         return "chat"                           # ayrıştırılamazsa güvenli varsayılan

@@ -8,7 +8,7 @@ from google.genai import types
 from ..config import MODEL, client
 from ..gemini_utils import content_text
 from ..prompt_rules import NUMBERS_AS_WORDS
-from ..session import Session, reservation_nudge
+from ..session import Session, record_usage, reservation_nudge
 
 CHAT_SYSTEM = """Sen bir otelin samimi, yardımsever asistanısın. Kullanıcıyla normal, doğal
 bir şekilde Türkçe sohbet et. Kullanıcı rezervasyon, otel bilgisi veya şikayet konusuna
@@ -24,6 +24,7 @@ def run_chat_agent(session: Session) -> str:
             system_instruction=CHAT_SYSTEM + reservation_nudge(session),
         ),
     )
+    record_usage(session, response)
     content = response.candidates[0].content
     session.chat_msgs.append(content)
     return content_text(content)
