@@ -62,6 +62,12 @@ def children_missing(state: ReservationState) -> list:
     return []
 
 
+def total_people(state: ReservationState) -> int:
+    """Toplam kişi = yetişkin (>12 yaş, total_guests) + çocuk (<=12 yaş, children_count).
+    Yatak/kapasite ihtiyacı DAİMA bu sayı üzerinden hesaplanır (yetişkin + çocuk = yatak)."""
+    return (state.total_guests or 0) + (state.children_count or 0)
+
+
 def missing_fields(state: ReservationState) -> list:
     """Aşama sırasına göre kalan tüm eksikler (debug/nudge için)."""
     return stage1_missing(state) + selection_missing(state) + children_missing(state)

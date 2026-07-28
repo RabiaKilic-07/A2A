@@ -87,12 +87,13 @@ class HotelBackend:
                              key=lambda g: (g["room_type"], g["view_type"], g["max_guests"])),
         }
 
-    def price_plan(self, selections, *, check_in, check_out, room_type, total_guests):
+    def price_plan(self, selections, *, check_in, check_out, room_type, required_capacity):
         """Gemini'nin seçtiği KARMA planı DOĞRULAR ve fiyatlar.
 
         selections: [{"view_type","room_count"}, ...] — hepsi aynı oda türünden, farklı manzaralar
         BİRLİKTE olabilir (ör. 1 deniz + 1 bahçe). Her seçim için grubu bulur, o manzaradan yeterli
-        oda olup olmadığını ve TOPLAM kapasitenin grubu aldığını kontrol eder, fiyatı toplar.
+        oda olup olmadığını ve TOPLAM kapasitenin (yatak) gerekeni karşıladığını kontrol eder, fiyatı toplar.
+        required_capacity = TOPLAM kişi (yetişkin + çocuk); toplam kapasite bunu karşılamalı.
         Geçerliyse {"price_per_night","capacity","rooms":[...]} döner; değilse None.
         """
         groups = {
@@ -113,7 +114,7 @@ class HotelBackend:
             price += count * group["price_per_night"]
             detail.append({"view_type": group["view_type"], "room_count": count,
                            "max_guests": group["max_guests"], "price_per_night": group["price_per_night"]})
-        if not detail or capacity < (total_guests or 0):   # boş seçim ya da kapasite yetmez
+        if not detail or capacity < (required_capacity or 0):   # boş seçim ya da yatak/kapasite yetmez
             return None
         return {"price_per_night": price, "capacity": capacity, "rooms": detail}
 

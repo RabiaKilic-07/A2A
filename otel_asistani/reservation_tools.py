@@ -26,13 +26,14 @@ from .reservation_state import (
     selection_missing,
     stage1_fingerprint,
     stage1_missing,
+    total_people,
 )
 
 # --- Alan şemaları: hepsi OPTIONAL (zorunluluk/sıra kodda tutulur) ---
 _schemas = {
     "check_in":       types.Schema(type=types.Type.STRING,  description="Giriş tarihi (YYYY-MM-DD)"),
     "check_out":      types.Schema(type=types.Type.STRING,  description="Çıkış tarihi (YYYY-MM-DD)"),
-    "total_guests":   types.Schema(type=types.Type.INTEGER, description="12 yaşından BÜYÜK kişi sayısı (12 yaş ve altı buraya DAHİL DEĞİL, çocuk sayılır)"),
+    "total_guests":   types.Schema(type=types.Type.INTEGER, description="YETİŞKİN sayısı: 12 yaşından BÜYÜK kişi sayısı (12 yaş ve altı buraya DAHİL DEĞİL, çocuk sayılır). Toplam kapasite/yatak = yetişkin + çocuk."),
     "room_type":      types.Schema(type=types.Type.STRING,  description="İstenen oda türü: standart/deluxe/suit (DEĞİŞMEZ; farklı tür önerilmez)"),
     "view_type":      types.Schema(type=types.Type.STRING,  description="Tercih edilen manzara (opsiyonel): deniz/kara/bahçe. Önceliklendirme için."),
     "rooms":          types.Schema(type=types.Type.ARRAY,
@@ -60,7 +61,7 @@ def _params(*names) -> types.Schema:
 
 check_availability_decl = types.FunctionDeclaration(
     name="check_availability",
-    description=("AŞAMA 1. Giriş/çıkış tarihi, kişi sayısı (total_guests: >12 yaş) ve oda türünü TEK seferde topla/doğrula. "
+    description=("AŞAMA 1. Giriş/çıkış tarihi, YETİŞKİN sayısı (total_guests: >12 yaş) ve oda türünü TEK seferde topla/doğrula. "
                  "Varsa manzara (view_type) ve çocuk (children_count/children_ages: <=12 yaş) bilgisini de ekle. "
                  "Eksikse 'incomplete' + missing_fields, tamsa 'stage1_ok' döner → ardından bed_options'ı çağır."),
     parameters=_params(*_INPUT),
@@ -69,8 +70,8 @@ check_availability_decl = types.FunctionDeclaration(
 bed_options_decl = types.FunctionDeclaration(
     name="bed_options",
     description=("AŞAMA 2. Tarih/oda türü için müsaitliği (manzara, kapasite, oda sayısı, gecelik fiyat) döndürür. "
-                 "Planlamayı sen yap: İstenen manzarada tek odaya sığan grup varsa (max_guests >= kişi sayısı) "
-                 "yalnızca onu öner (BİREBİR). Yoksa farklı manzara veya odayı bölerek (karma) öner. "
+                 "Planlamayı sen yap: TOPLAM kişi (yetişkin + çocuk) tek odaya sığıyorsa (max_guests >= toplam kişi) "
+                 "yalnızca onu öner (BİREBİR). Yoksa farklı manzara veya odayı bölerek (karma) öner; toplam yatak >= toplam kişi. "
                  "YALNIZCA 'stage1_ok' alındıktan sonra çağır."),
     parameters=_params("check_in", "check_out", "total_guests", "room_type", "view_type"),
 )
@@ -130,16 +131,23 @@ def bed_options(state: ReservationState, **kwargs) -> dict:
         return {"status": "no_match",
                 "message": "Bu tarih için istenen oda türünden müsait oda yok. Bilgileri güncelleyin."}
 
+    people = total_people(state)                            # yatak ihtiyacı = yetişkin + çocuk
     state.options_offered_for = stage1_fingerprint(state)   # müsaitliği O aşama-1 girdisine mühürle
     return {
         "status": "options",
-        "total_guests": state.total_guests,
-        "availability": availability,
-        "message": ("Bu MÜSAİTLİK verisine göre planla. İstenen manzarada tek odaya sığan bir grup varsa "
-                    "(max_guests >= kişi sayısı, count >= 1) BİREBİR odur → yalnızca onu öner. Yoksa: aynı "
-                    "türde farklı manzara ya da odayı BÖL (bir grubu birden çok oda seçerek; oda sayısı o "
-                    "grubun count'unu aşamaz). İstenen manzarada yeterli oda yoksa o manzaradan alıp KALANI "
-                    "başka manzaradan tamamla (karma). Kullanıcı seçince complete_reservation'ı rooms listesiyle çağır."),
+        "total_guests": state.total_guests,                 # yetişkin (>12 yaş)
+        "children_count": state.children_count or 0,        # çocuk (<=12 yaş)
+        "total_people": people,                             # TOPLAM kişi = gereken yatak sayısı
+        "availability": availability,                       # her grubun DB fiyatı: price_per_night
+        "message": (f"Bu MÜSAİTLİK verisine göre planla. TOPLAM {people} kişi (yetişkin+çocuk) için YATAK yeterli "
+                    f"olacak şekilde seç: seçilen odaların toplam kapasitesi >= {people} olmalı. İstenen manzarada "
+                    f"tek odaya TÜM grup sığıyorsa (max_guests >= {people}, count >= 1) BİREBİR onu öner. Sığmıyorsa: "
+                    "aynı türde farklı manzara ya da odayı BÖL (bir grubu birden çok oda seçerek; oda sayısı o grubun "
+                    "count'unu aşamaz). İstenen manzarada yeterli oda yoksa o manzaradan alıp KALANI başka manzaradan "
+                    "tamamla (karma). Seçenekleri DOĞAL, akıcı cümlelerle sun; 'Birinci/İkinci seçenek', '1/2/3', "
+                    "numaralı/madde liste KULLANMA — seçenekleri içerikleriyle (manzara+dağılım+fiyat) ayır ve seçimi "
+                    "içerikle iste. Fiyatı DB'den GELDİĞİ GİBİ (price_per_night) DOĞRUDAN yaz; gece sayısıyla ÇARPMA, "
+                    "toplam HESAPLAMA. Kullanıcı seçince complete_reservation'ı rooms listesiyle çağır."),
     }
 
 
@@ -156,19 +164,19 @@ def _build_summary(state: ReservationState, plan: dict) -> dict:
     summary = {
         "check_in": state.check_in,
         "check_out": state.check_out,
-        "total_guests": state.total_guests,
+        "total_guests": state.total_guests,                # yetişkin
         "children_count": state.children_count,
         "children_ages": state.children_ages or [],
+        "total_people": total_people(state),               # toplam kişi = yetişkin + çocuk
         "room_type": state.room_type,
         "rooms": [{"view_type": r["view_type"], "room_count": r["room_count"],
                    "per_room_capacity": r["max_guests"]} for r in plan["rooms"]],
         "total_capacity": plan["capacity"],
-        "price_per_night": price,
+        "price": price,                                    # DB'den gelen fiyat (seçilen odaların DB fiyatı) — HESAPLAMA YOK
     }
     nights = _nights(state.check_in, state.check_out)
     if nights and nights > 0:
-        summary["nights"] = nights
-        summary["total_price"] = price * nights
+        summary["nights"] = nights                         # bilgi amaçlı gece sayısı (fiyat DEĞİL, çarpım yapılmaz)
     return summary
 
 
@@ -199,11 +207,11 @@ def complete_reservation(state: ReservationState, **kwargs) -> dict:
     if children_missing(state):
         return {"is_error": True, "error": "cocuk_bilgisi_eksik", "missing_fields": children_missing(state)}
 
-    # GARANTİ 2: seçilen KARMA plan DB'de müsait ve toplam kapasitesi yeterli mi?
+    # GARANTİ 2: seçilen KARMA plan DB'de müsait mi ve toplam kapasitesi TOPLAM kişiyi (yetişkin+çocuk) karşılıyor mu?
     plan = hotel_backend.price_plan(
         state.selected_rooms,
         check_in=state.check_in, check_out=state.check_out,
-        room_type=state.room_type, total_guests=state.total_guests,
+        room_type=state.room_type, required_capacity=total_people(state),
     )
     if plan is None:
         state.confirmation_pending_for = None

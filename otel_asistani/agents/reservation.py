@@ -8,7 +8,6 @@ beklerse (stall), bir kez mode=ANY ile check_availability'yi çağırmaya ZORLAR
 DB sorgusu beklemeden yapılır ve yeni filtreye göre seçenekler sunulur.
 """
 
-import json
 import os
 from datetime import date
 
@@ -16,10 +15,9 @@ from google.genai import types
 
 from ..config import MODEL, client
 from ..gemini_utils import content_text, user_content
-from ..hotel_backend import hotel_backend
 from ..prompt_rules import NUMBERS_AS_WORDS
 from ..raw_log import log_llm_call
-from ..reservation_state import ReservationState, stage1_missing
+from ..reservation_state import ReservationState, stage1_missing, total_people
 from ..reservation_tools import RESERVATION_TOOL, dispatch
 from ..session import Session, record_usage
 from ..wait_filler import run_with_wait_filler
@@ -37,21 +35,25 @@ _DATE_NOTE = (
 RESERVATION_SYSTEM = """Sen bir otelin rezervasyon asistanısın. Akış:
 
 1) AŞAMA 1 (Bilgi Toplama):
-- TEK mesajda birlikte iste: giriş/çıkış tarihi, oda türü, grup bilgisi (kişi sayısı, yaşlar, çocuk var mı). Manzara (view_type) opsiyoneldir.
-- KİŞİ SAYIMI KURALINI AÇIKLA VE SEN HESAPLA: >12 yaş total_guests, <=12 yaş children_count (yaşları children_ages). Örnek: 2 yetişkin + 15 ve 8 yaş → total_guests=3, children_count=1, children_ages=[8].
+- TEK mesajda birlikte iste: giriş/çıkış tarihi, oda türü, grup bilgisi (YETİŞKİN sayısı, çocuk var mı, çocukların yaşları). Manzara (view_type) opsiyoneldir. Kullanıcıya "kaç kişi" değil "kaç YETİŞKİN" diye sor.
+- SAYIM KURALINI AÇIKLA VE SEN HESAPLA: >12 yaş YETİŞKİN'dir → total_guests; <=12 yaş ÇOCUK'tur → children_count (yaşları children_ages). Örnek: 2 yetişkin + 15 ve 8 yaş → total_guests=3 (yetişkin), children_count=1, children_ages=[8].
+- YATAK/KAPASİTE: gereken yatak sayısı = YETİŞKİN + ÇOCUK (toplam kişi). DB kapasite kontrolü ve oda planlaması DAİMA bu toplam üzerinden yapılır (çocuk da yatak ister).
 - ASLA BİLGİ UYDURMA/VARSAYMA (özellikle oda türü). Sadece verilenleri araca gönder. Eksikse tahmini arama yapma; 'incomplete' dönünce eksiklerin HEPSİNİ birlikte sor.
 - 'no_match' → uygun oda yok, güncellettir. 'stage1_ok' → HEMEN bed_options çağır.
 
 2) AŞAMA 2 (Öneri ve Seçim):
-- bed_options müsaitliği verir. ODA TÜRÜNÜ DEĞİŞTİRME. En fazla 5 seçenek sun, numaralandır, oda dağılımı + toplam gecelik fiyatla ver. Uydurma.
-- Planlama Kuralları (Farklı manzaralar birleşip KARMA plan olabilir):
-  1. Manzara Önceliği: İstenen manzarada tek odaya sığan grup varsa (max_guests >= total_guests) → YALNIZCA onu öner (BİREBİR). Sığmıyorsa önce o manzaradan count kadar al, kalanı başka manzaradan tamamla (KARMA). İstenen manzarada hiç yoksa/belirtilmediyse diğerlerinden öner.
-  2. Dengeli Bölme: Kişileri odalara eşit dağıt (6 kişi → 3+3). İstenmedikçe "5+1" gibi dengesiz bölme.
-- Kullanıcı seçince HEMEN complete_reservation(rooms=[{view_type, room_count}, ...]) çağır (metinle "harika" deyip geçme!). 'gecersiz_secim' → yeniden seçtir.
+- bed_options müsaitliği + total_people (toplam kişi = yetişkin+çocuk) döner. ODA TÜRÜNÜ DEĞİŞTİRME. En fazla 5 seçenek sun. Fiyatı DB'den GELDİĞİ GİBİ (price_per_night) DOĞRUDAN ver; gece sayısıyla ÇARPMA, toplam HESAPLAMA yapma. Uydurma.
+- SEÇENEK SUNUMU (ÇOK ÖNEMLİ): Seçenekleri ASLA etiketleme/numaralandırma — "1/2/3", "Birinci/İkinci/Üçüncü seçenek", "seçenek bir/iki", numaralı ya da madde madde liste KULLANMA. Seçenekleri AKICI, doğal cümlelerle, birbirinden İÇERİKLERİYLE (manzara + oda dağılımı + fiyat) ayırt edilecek şekilde anlat. Seçimi de numarayla DEĞİL, içerikle iste.
+  YANLIŞ: "Birinci seçenek: bir deniz bir kara oda... İkinci seçenek: iki bahçe oda... Hangi seçeneği tercih edersiniz?"
+  DOĞRU: "Deniz manzaralı bir oda ile kara manzaralı bir odayı birlikte alabilirsiniz; fiyatları dört bin ve üç bin sekiz yüz TL. Dilerseniz iki bahçe manzaralı oda da mümkün; her biri üç bin beş yüz TL. Hangisi size daha uygun olur?"
+- Planlama Kuralları (Farklı manzaralar birleşip KARMA plan olabilir; her zaman TOPLAM kişi = yetişkin+çocuk üzerinden):
+  1. Manzara Önceliği: İstenen manzarada tek odaya TÜM grup (toplam kişi) sığıyorsa (max_guests >= toplam kişi) → YALNIZCA onu öner (BİREBİR). Sığmıyorsa önce o manzaradan count kadar al, kalanı başka manzaradan tamamla (KARMA). İstenen manzarada hiç yoksa/belirtilmediyse diğerlerinden öner.
+  2. Dengeli Bölme: TOPLAM kişiyi (yetişkin+çocuk) odalara eşit dağıt (6 kişi → 3+3). Seçilen odaların toplam kapasitesi toplam kişiden AZ olamaz. İstenmedikçe "5+1" gibi dengesiz bölme.
+- Kullanıcı seçimini SERBEST/konuşma diliyle yapabilir (ör. "deniz manzaralı olan", "kara odaları", "ilkini", "ikincisini", "bahçeli olsun"). Ne kastettiğini ANLA ve doğru odaları HEMEN complete_reservation(rooms=[{view_type, room_count}, ...]) ile çağır (metinle "harika" deyip geçme!). Belirsizse kısaca netleştir. 'gecersiz_secim' → yeniden seçtir.
 
 3) AŞAMA 3 (Özet ve Onay):
 - Seçim yapılınca complete_reservation'ı confirmed OLMADAN çağır.
-- 'needs_confirmation' + summary dönünce: Özetteki TÜM bilgileri (tarihler, kişiler, oda türü/dağılımı, çocuk, gecelik/toplam fiyat) göster, "Onaylıyor musunuz?" diye sor ve BEKLE. Özeti uydurma.
+- 'needs_confirmation' + summary dönünce: Özetteki TÜM bilgileri (tarihler, kişiler, oda türü/dağılımı, çocuk, fiyat) göster; fiyatı summary'deki DB değeriyle (price) DOĞRUDAN yaz, gece sayısıyla çarpıp toplam HESAPLAMA. "Onaylıyor musunuz?" diye sor ve BEKLE. Özeti uydurma.
 - Kullanıcı AÇIKÇA onaylarsa (evet/onaylıyorum) confirmed=true ile TEKRAR çağır → booking_id bildir. Onaysız ASLA confirmed=true gönderme.
 - Değişiklik isterse ilgili aşamaya dön. 'secenekler_gecersiz' → AŞAMA 1'den başla.
 
@@ -107,7 +109,7 @@ def _looks_like_stall(text: str) -> bool:
 def _bed_options_wait_context(state: ReservationState) -> str:
     """bed_options DB sorgusu öncesi bekleme cümlesi için bağlam (kullanıcının aşama-1 girdileri)."""
     return (f"Kullanıcı şu rezervasyon için uygun oda ve yatak seçeneklerini bekliyor: "
-            f"giriş {state.check_in}, çıkış {state.check_out}, {state.total_guests} kişi, "
+            f"giriş {state.check_in}, çıkış {state.check_out}, {total_people(state)} kişi, "
             f"{state.room_type} oda. Şimdi uygun odalar veritabanından sorgulanacak.")
 
 
@@ -178,13 +180,6 @@ def run_reservation_subagent(session: Session, max_iters: int = 8) -> str:
             args = dict(fc.args or {})
             out = dispatch(session.reservation_state, fc.name, args)
             session.turn_tool_log.append((fc.name, args, out))     # ← tool logu
-            if fc.name == "bed_options":                           # DB endpoint'inden dönen oda bilgilerini logla
-                st = session.reservation_state
-                db = hotel_backend.available_rooms(
-                    check_in=st.check_in, check_out=st.check_out, room_type=st.room_type,
-                )
-                print("\nbed options - DB (oda grupları/sayıları):",
-                      json.dumps(db, ensure_ascii=False, indent=2))
             status = out.get("status")
             # Aşama-1 tamamsa (bilgi değişse bile) DB sorgusunu BEKLETMEDEN yaptır: stage1_ok
             # gelir gelmez bed_options'ı zorla. bed_options üretimi, sonraki turda bir bekleme

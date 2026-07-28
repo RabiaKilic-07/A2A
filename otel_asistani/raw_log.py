@@ -1,17 +1,17 @@
-"""Ham (raw) giriş/çıkış loglama — token maliyeti teşhisi için.
+"""Ham (raw) token loglama — token maliyeti teşhisi için.
 
-Her LLM çağrısında modele GİDEN veriyi (system prompt + tüm geçmiş/contents +
-tool şemaları) ve modelden GELEN veriyi (metin / function_call) olduğu gibi
-konsola dökeriz. Ayrıca usage_metadata'dan GİRDİ/ÇIKTI token kırılımını gösteririz.
+VARSAYILAN: her LLM çağrısı için yalnızca hangi ajan olduğunu (başlık) ve
+usage_metadata'dan GERÇEK token kırılımını (GİRDİ/ÇIKTI/düşünce/cache/TOPLAM) basar.
+System prompt ve mesaj içerikleri BASILMAZ.
 
-Amaç: hangi ajana NE gönderdiğimizi ve asıl token maliyetinin NEREDEN geldiğini
-(system+tool şemasının her turda tekrar gitmesi mi, geçmişin — özellikle bed_options
-TOOL-SONUCU JSON'larının — şişmesi mi) çıplak gözle görmek.
+Full dökümü (system + tüm geçmiş/contents + tool şemaları + çıktı metni) görmek için:
+    OTEL_RAW_LOG_PROMPTS=1
+Tüm loglamayı kapatmak için: OTEL_RAW_LOG=0
 
 Loglar session.raw_log tamponuna yazılır; cli.py her turun SONUNDA, normal konuşma
-mesajının hemen altına '----' ayıracıyla basar. Kapatmak için: OTEL_RAW_LOG=0
+mesajının hemen altına '----' ayıracıyla basar.
 
-Karakter tabanlı (~tok) değerler KABA tahmindir (≈4 krk/token); GERÇEK sayılar
+Karakter tabanlı (~tok) değerler (full dökümde) KABA tahmindir; GERÇEK sayılar
 'TOKEN' satırındaki usage_metadata değerleridir.
 """
 
@@ -20,6 +20,9 @@ import os
 
 _ENABLED = os.environ.get("OTEL_RAW_LOG", "1").lower() not in {"0", "false", "no", "off"}
 _MAXLEN = int(os.environ.get("OTEL_RAW_LOG_MAXLEN", "4000"))   # tek parçada gösterilecek azami krk
+# Varsayılan: SADECE token bilgisi (system prompt + içerik dökümü BASILMAZ).
+# Full dökümü (system + contents + tools + çıktı metni) görmek için: OTEL_RAW_LOG_PROMPTS=1
+_SHOW_PROMPTS = os.environ.get("OTEL_RAW_LOG_PROMPTS", "0").lower() in {"1", "true", "yes", "on"}
 
 _TAGS = {
     "function_response": "TOOL-SONUCU",
@@ -162,8 +165,11 @@ def log_llm_call(session, label, *, system=None, contents=None, tools=None,
     if note:
         head += f"  |  {note}"
     block = [head]
-    block += _render_input(system, contents, tools, sys_seen)
+    # Varsayılan: SADECE token. Full prompt/içerik dökümü yalnızca OTEL_RAW_LOG_PROMPTS=1 iken.
+    if _SHOW_PROMPTS:
+        block += _render_input(system, contents, tools, sys_seen)
+        if response is not None:
+            block += _render_output(response)
     if response is not None:
-        block += _render_output(response)
         block += _render_tokens(response)
     session.raw_log.append("\n".join(block))
