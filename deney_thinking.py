@@ -1,11 +1,11 @@
 """A/B DENEYİ — Rezervasyon akışında 'düşünce' (thinking) doğruluğa yardım ediyor mu?
 
-Aynı sabit rezervasyon senaryosunu farklı düşünme BÜTÇELERİYLE çalıştırıp karşılaştırır:
-  * BÜTÇE 0             → OTEL_RES_THINKING_BUDGET=0    (düşünme kapalı)
-  * BÜTÇE 512           → OTEL_RES_THINKING_BUDGET=512  (kodun varsayılanı, düşük)
-  * BÜTÇE DİNAMİK       → OTEL_RES_THINKING_BUDGET=-1   (model kendi ayarlar)
+Aynı sabit rezervasyon senaryosunu farklı düşünme DÜZEYLERİYLE çalıştırıp karşılaştırır:
+  * HIGH                → OTEL_RES_THINKING_LEVEL=high    (Gemini 3 varsayılanı)
+  * LOW                 → OTEL_RES_THINKING_LEVEL=low     (kodun varsayılanı)
+  * MINIMAL             → OTEL_RES_THINKING_LEVEL=minimal
 
-NOT: gemini-2.5-flash düşünmeyi thinking_BUDGET (token) ile kontrol eder; 3.x'in level'i değil.
+NOT: gemini-3.6-flash düşünmeyi thinking_LEVEL ile kontrol eder (thinking_budget değil).
 
 Ölçtükleri:
   * DOĞRULUK : rezervasyon tamamlandı mı (booking_id), araç sırası doğru mu, hata döndü mü
@@ -51,13 +51,13 @@ def _tool_summary(out: dict) -> str:
     return out.get("status", "?")
 
 
-def run_once(budget):
-    """Senaryoyu bir kez çalıştırır; düşünme bütçesini uygular ve metrikleri döndürür.
-    budget: None (kod varsayılanı) | 0 (kapalı) | pozitif token | -1 (dinamik)."""
-    if budget is None:
-        os.environ.pop("OTEL_RES_THINKING_BUDGET", None)
+def run_once(level):
+    """Senaryoyu bir kez çalıştırır; düşünme düzeyini uygular ve metrikleri döndürür.
+    level: None (kod varsayılanı) | "minimal" | "low" | "medium" | "high"."""
+    if level is None:
+        os.environ.pop("OTEL_RES_THINKING_LEVEL", None)
     else:
-        os.environ["OTEL_RES_THINKING_BUDGET"] = str(budget)
+        os.environ["OTEL_RES_THINKING_LEVEL"] = str(level)
 
     session = Session()
     tool_seq, errors, api_error = [], 0, None
@@ -98,11 +98,11 @@ def average(runs, key):
 
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 2
-    # gemini-2.5-flash: düşünme bütçesi token ile verilir. Bütçeyi AÇIKÇA veriyoruz.
+    # gemini-3.6-flash: düşünme düzeyi thinking_level ile verilir. Düzeyi AÇIKÇA veriyoruz.
     conditions = [
-        ("BÜTÇE 0 (kapalı)", 0),
-        ("BÜTÇE 512 (varsayılan)", 512),
-        ("BÜTÇE DİNAMİK (-1)", -1),
+        ("DÜŞÜNCE HIGH", "high"),
+        ("DÜŞÜNCE LOW (varsayılan)", "low"),
+        ("DÜŞÜNCE MINIMAL", "minimal"),
     ]
 
     results = {}

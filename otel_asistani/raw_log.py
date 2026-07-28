@@ -1,7 +1,7 @@
 """Ham (raw) token loglama — token maliyeti teşhisi için.
 
 VARSAYILAN: her LLM çağrısı için yalnızca hangi ajan olduğunu (başlık) ve
-usage_metadata'dan GERÇEK token kırılımını (GİRDİ/ÇIKTI/düşünce/cache/TOPLAM) basar.
+usage_metadata'dan GERÇEK token kırılımını (GİRDİ/ÇIKTI/düşünce/TOPLAM) basar.
 System prompt ve mesaj içerikleri BASILMAZ.
 
 Full dökümü (system + tüm geçmiş/contents + tool şemaları + çıktı metni) görmek için:
@@ -142,13 +142,10 @@ def _render_tokens(response):
     p = getattr(u, "prompt_token_count", None) or 0
     o = getattr(u, "candidates_token_count", None) or 0
     th = getattr(u, "thoughts_token_count", None) or 0
-    cache = getattr(u, "cached_content_token_count", None) or 0
     tot = getattr(u, "total_token_count", None) or 0
     line = f"  GİRDİ(prompt)={p}   ÇIKTI(candidates)={o}"
     if th:
         line += f"   düşünce={th}"
-    if cache:
-        line += f"   cache={cache}"
     line += f"   ->  TOPLAM={tot}"
     return ["---- TOKEN (gerçek, usage_metadata) ----", line]
 

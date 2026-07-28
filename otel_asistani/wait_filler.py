@@ -32,22 +32,23 @@ _FILLER_SYSTEM = (
 def make_wait_filler(context: str, session: Optional[Session] = None) -> str:
     """Verilen bağlama göre kısa bir bekleme cümlesi üretir (üretilemezse boş döner).
 
-    Düşünme (thinking) KAPALI (thinking_budget=0): model, muhakemesini çıktıya dökmeden
-    doğrudan tek cümleyi ÇOK HIZLI üretsin (bekleme cümlesi anında iletilmeli).
+    Düşünme MİNİMUM (thinking_level=minimal): model, muhakemesini çıktıya dökmeden doğrudan tek
+    cümleyi ÇOK HIZLI üretsin (bekleme cümlesi anında iletilmeli). gemini-3.6-flash thinking_LEVEL
+    kullanır (thinking_budget=0 → 400 verir).
     """
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=MODEL,
             contents=context,
             config=types.GenerateContentConfig(
                 system_instruction=_FILLER_SYSTEM,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                thinking_config=types.ThinkingConfig(thinking_level="minimal"),
             ),
         )
         if session:
             record_usage(session, response)
             log_llm_call(session, "WAIT_FILLER", system=_FILLER_SYSTEM, contents=context,
-                         response=response, model="gemini-2.5-flash", note="thinking=0")
+                         response=response, model=MODEL, note="thinking=minimal")
         return content_text(response.candidates[0].content)
     except Exception:
         return ""   # filler kritik değil; başarısız olursa akışı durdurma
