@@ -18,12 +18,14 @@ def run_complaint_subagent(session: Session) -> str:
     system = COMPLAINT_SYSTEM + reservation_nudge(session)
     response = client.models.generate_content(
         model=MODEL,
-        contents=session.complaint_msgs,
+        contents=[m for m in session.complaint_msgs if m is not None],   # None'ları süz (kirli geçmiş koruması)
         config=types.GenerateContentConfig(system_instruction=system),
     )
     record_usage(session, response)
     log_llm_call(session, "COMPLAINT", system=system, contents=session.complaint_msgs,
                  response=response, model=MODEL)
-    content = response.candidates[0].content
+    content = response.candidates[0].content if response.candidates else None
+    if content is None:                                # boş content'i geçmişe ekleme (None kirliliği)
+        return "Üzgünüm, şu an yanıt oluşturamadım. Tekrar dener misiniz?"
     session.complaint_msgs.append(content)
     return content_text(content)

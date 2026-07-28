@@ -82,13 +82,13 @@ def _config(force_tool: str = None, text_only: bool = False) -> types.GenerateCo
                 mode="ANY", allowed_function_names=[force_tool],
             )
         )
-    # Rezervasyon çağrılarında düşünme düzeyi. Deney sonucu (deney_thinking.py): HIGH (Gemini 3
-    # varsayılanı) doğruluğa katkı yapmadan ~2x token yakıyor ve gereksiz tool-loop'a yol açıyor;
-    # "low" AYNI isabetle ~%42 daha ucuz → VARSAYILAN "low". OTEL_RES_THINKING_LEVEL ile geçersiz
-    # kılınabilir (minimal | low | medium | high). Gemini 3.x düşünmeyi thinking_LEVEL ile kontrol
-    # eder (thinking_budget=0 → 400 verir).
-    level = os.environ.get("OTEL_RES_THINKING_LEVEL") or "low"
-    thinking_config = types.ThinkingConfig(thinking_level=level)
+    # Rezervasyon çağrılarında düşünme BÜTÇESİ (token). gemini-2.5-flash düşünmeyi thinking_BUDGET
+    # ile kontrol eder (Gemini 3'ün thinking_LEVEL'i DEĞİL). Deney sonucu: düşük düşünme aynı isabetle
+    # çok daha ucuz. VARSAYILAN 512 (düşük ama planlamaya biraz pay bırakır). 0 = tamamen kapalı,
+    # -1 = dinamik. OTEL_RES_THINKING_BUDGET ile override edilir. Geçerli aralık: 0–24576.
+    budget = os.environ.get("OTEL_RES_THINKING_BUDGET")
+    budget = int(budget) if budget not in (None, "") else 512
+    thinking_config = types.ThinkingConfig(thinking_budget=budget)
 
     return types.GenerateContentConfig(
         system_instruction=_system_text(),
@@ -128,8 +128,11 @@ def run_reservation_subagent(session: Session, max_iters: int = 8) -> str:
             note += " | text_only (mode=NONE)"
 
         def _generate(cfg=cfg):
+            # Savunma: geçmişte None varsa (eski/kirli oturum) süz → pydantic ValidationError'ı önle.
             res = client.models.generate_content(
-                model=MODEL, contents=session.reservation_msgs, config=cfg,
+                model=MODEL,
+                contents=[m for m in session.reservation_msgs if m is not None],
+                config=cfg,
             )
             record_usage(session, res)
             return res
@@ -142,7 +145,13 @@ def run_reservation_subagent(session: Session, max_iters: int = 8) -> str:
                      contents=session.reservation_msgs, tools=[RESERVATION_TOOL],
                      response=response, model=MODEL, note=note)
         force_tool, text_only, filler_ctx = None, False, None   # zorlama/kısıt tek turluktur
-        candidate = response.candidates[0]
+        candidate = response.candidates[0] if response.candidates else None
+        # gemini-2.5-flash bazen content=None döndürebilir (ör. finish_reason=MAX_TOKENS: bütçe
+        # tümüyle düşünmeye gitti, görünür çıktı yok). Geçmişi None ile KİRLETME → yoksa sonraki
+        # çağrıda contents içinde None gider ve pydantic ValidationError verir. Nazikçe çık.
+        if candidate is None or candidate.content is None:
+            fr = getattr(candidate, "finish_reason", None)
+            return f"Üzgünüm, yanıtı oluşturamadım (sebep: {fr}). Lütfen tekrar dener misiniz?"
         session.reservation_msgs.append(candidate.content)      # model turu
 
         fcs = response.function_calls or []
