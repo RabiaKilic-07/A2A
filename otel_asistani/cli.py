@@ -1,9 +1,20 @@
 """Basit konsol döngüsü — kullanıcı girdisini alır, yanıtı ve tool/debug logunu basar."""
 
+import sys
+
 from .config import API_KEY, MODEL
 from .orchestrator import handle_user_turn
 from .reservation_state import missing_fields
 from .session import Session
+
+
+def _safe_print(text: str) -> None:
+    """Konsol kodlaması (ör. cp1254) ham dökümdeki bir karakteri basamazsa turu çökertme."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+        print(text.encode(enc, errors="replace").decode(enc))
 
 
 def _summarize_result(out: dict) -> str:
@@ -25,6 +36,16 @@ def _summarize_result(out: dict) -> str:
     if status == "confirmed":
         return f"confirmed booking={out.get('booking_id')}"
     return status
+
+
+def _print_raw_log(session: Session) -> None:
+    """Bu turdaki her LLM çağrısının modele giren/çıkan ham verisini basar."""
+    if not session.raw_log:
+        return
+    _safe_print("\n" + "-" * 20 + " RAW (bu turda modele GİREN/ÇIKAN ham veri) " + "-" * 20)
+    for block in session.raw_log:
+        _safe_print(block)
+        _safe_print("-" * 84)
 
 
 def _print_tool_log(session: Session) -> None:
@@ -58,8 +79,11 @@ def main() -> None:
                   f"       (API anahtarını/modeli kontrol et: GEMINI_API_KEY, MODEL={MODEL})\n")
             continue
         print(f"\nAsistan: {reply}")
+        _print_raw_log(session)                # ← normal mesajın hemen altına ham giriş/çıkış dökümü
         _print_tool_log(session)
         print(f"[debug] active_flow={session.active_flow} "
               f"eksik={missing_fields(session.reservation_state)} "
               f"booking={session.reservation_state.booking_id}")
-        print(f"[token] Bu mesaj için: {session.turn_tokens} token | Toplam: {session.total_tokens} token\n")
+        print(f"[token] Bu mesaj için: {session.turn_tokens} token "
+              f"(düşünce {session.turn_thinking}, {session.turn_llm_calls} LLM çağrısı) "
+              f"| Toplam: {session.total_tokens} token\n")

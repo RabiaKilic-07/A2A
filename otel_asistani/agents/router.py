@@ -11,6 +11,7 @@ from google.genai import types
 
 from ..config import MODEL, client
 from ..gemini_utils import last_model_question
+from ..raw_log import log_llm_call
 from ..session import Session, record_usage
 
 
@@ -56,6 +57,8 @@ def route(session: Session, user_text: str) -> str:
         ),
     )
     record_usage(session, response)
+    log_llm_call(session, "ROUTER", system=system, contents=user_text,
+                 response=response, model=MODEL)
     decision = response.parsed
     if decision is None:
         return "chat"                           # ayrıştırılamazsa güvenli varsayılan

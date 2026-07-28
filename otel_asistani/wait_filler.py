@@ -17,6 +17,7 @@ from google.genai import types
 from .config import MODEL, client
 from .gemini_utils import content_text
 from .prompt_rules import NUMBERS_AS_WORDS
+from .raw_log import log_llm_call
 from .session import Session, record_usage
 
 _FILLER_SYSTEM = (
@@ -45,6 +46,8 @@ def make_wait_filler(context: str, session: Optional[Session] = None) -> str:
         )
         if session:
             record_usage(session, response)
+            log_llm_call(session, "WAIT_FILLER", system=_FILLER_SYSTEM, contents=context,
+                         response=response, model="gemini-2.5-flash", note="thinking=0")
         return content_text(response.candidates[0].content)
     except Exception:
         return ""   # filler kritik değil; başarısız olursa akışı durdurma

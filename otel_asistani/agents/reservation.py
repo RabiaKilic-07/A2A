@@ -9,6 +9,7 @@ DB sorgusu beklemeden yapılır ve yeni filtreye göre seçenekler sunulur.
 """
 
 import json
+import os
 from datetime import date
 
 from google.genai import types
@@ -17,7 +18,8 @@ from ..config import MODEL, client
 from ..gemini_utils import content_text, user_content
 from ..hotel_backend import hotel_backend
 from ..prompt_rules import NUMBERS_AS_WORDS
-from ..reservation_state import ReservationState
+from ..raw_log import log_llm_call
+from ..reservation_state import ReservationState, stage1_missing
 from ..reservation_tools import RESERVATION_TOOL, dispatch
 from ..session import Session, record_usage
 from ..wait_filler import run_with_wait_filler
@@ -62,6 +64,12 @@ BİLGİ DEĞİŞİRSE / STALL ENGELİ:
 _STALL_HINTS = ("kontrol ed", "sorgul", "müsaitli", "musaitli", "bakıyorum", "bakayım", "tekrar bak")
 
 
+def _system_text() -> str:
+    """Rezervasyon system promptu (tarih notu + akış kuralları + sayı yazımı)."""
+    return (_DATE_NOTE.format(today=date.today().isoformat())
+            + RESERVATION_SYSTEM + "\n\n" + NUMBERS_AS_WORDS)
+
+
 def _config(force_tool: str = None, text_only: bool = False) -> types.GenerateContentConfig:
     tool_config = None
     if text_only:                                   # araç çağırmayı YASAKLA (mode=NONE) → sadece metin
@@ -74,12 +82,20 @@ def _config(force_tool: str = None, text_only: bool = False) -> types.GenerateCo
                 mode="ANY", allowed_function_names=[force_tool],
             )
         )
+    # Rezervasyon çağrılarında düşünme düzeyi. Deney sonucu (deney_thinking.py): HIGH (Gemini 3
+    # varsayılanı) doğruluğa katkı yapmadan ~2x token yakıyor ve gereksiz tool-loop'a yol açıyor;
+    # "low" AYNI isabetle ~%42 daha ucuz → VARSAYILAN "low". OTEL_RES_THINKING_LEVEL ile geçersiz
+    # kılınabilir (minimal | low | medium | high). Gemini 3.x düşünmeyi thinking_LEVEL ile kontrol
+    # eder (thinking_budget=0 → 400 verir).
+    level = os.environ.get("OTEL_RES_THINKING_LEVEL") or "low"
+    thinking_config = types.ThinkingConfig(thinking_level=level)
+
     return types.GenerateContentConfig(
-        system_instruction=(_DATE_NOTE.format(today=date.today().isoformat())
-                             + RESERVATION_SYSTEM + "\n\n" + NUMBERS_AS_WORDS),
+        system_instruction=_system_text(),
         tools=[RESERVATION_TOOL],
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),  # manuel kontrol
         tool_config=tool_config,
+        thinking_config=thinking_config,
     )
 
 
@@ -100,9 +116,16 @@ def run_reservation_subagent(session: Session, max_iters: int = 8) -> str:
     text_only = False       # sonraki turda araç YASAK (mode=NONE) → özeti sun/soru sor
     filler_ctx = None       # sonraki üretim, EŞ ZAMANLI bir bekleme cümlesiyle yapılacaksa bağlam
     forced_once = False     # metin-stall zorlamasını tek sefere sınırla
-    for _ in range(max_iters):
+    for loop_i in range(max_iters):
         expect_text = text_only                                 # bu tur kasıtlı metin turu mu?
         cfg = _config(force_tool, text_only)
+
+        # Bu turun modu (loglamada mode=ANY zorlama / mode=NONE metin turu görünür olsun).
+        note = f"iter {loop_i + 1}"
+        if force_tool:
+            note += f" | force_tool={force_tool} (mode=ANY)"
+        if text_only:
+            note += " | text_only (mode=NONE)"
 
         def _generate(cfg=cfg):
             res = client.models.generate_content(
@@ -114,6 +137,10 @@ def run_reservation_subagent(session: Session, max_iters: int = 8) -> str:
         # bed_options gibi bekleme yaratan bir üretim varsa: üretimi HEMEN başlat, bekleme
         # cümlesini onunla EŞ ZAMANLI üret (sorgu, filler'ı beklemez).
         response = run_with_wait_filler(_generate, filler_ctx, session) if filler_ctx else _generate()
+        # Ham döküm: contents HENÜZ model yanıtı eklenmeden loglanır → tam olarak modele GİDEN girdi.
+        log_llm_call(session, "RESERVATION", system=_system_text(),
+                     contents=session.reservation_msgs, tools=[RESERVATION_TOOL],
+                     response=response, model=MODEL, note=note)
         force_tool, text_only, filler_ctx = None, False, None   # zorlama/kısıt tek turluktur
         candidate = response.candidates[0]
         session.reservation_msgs.append(candidate.content)      # model turu
@@ -125,7 +152,10 @@ def run_reservation_subagent(session: Session, max_iters: int = 8) -> str:
             if expect_text:
                 return text
             # Model aracı çağırmadan "kontrol ediyorum" deyip beklerse → bir kez zorla çağırt.
-            if not forced_once and _looks_like_stall(text):
+            # Ama YALNIZCA aşama-1 tamsa: elde veri yokken zorlamak boş bir çağrı yakıp
+            # 'incomplete' döndürür (model zaten bilgi istiyordur). Sadece "bilgi DEĞİŞTİ ama
+            # aracı çağırmadı" durumunda (state dolu) zorlamak anlamlıdır.
+            if not forced_once and _looks_like_stall(text) and not stage1_missing(session.reservation_state):
                 forced_once = True
                 force_tool = "check_availability"
                 session.reservation_msgs.append(

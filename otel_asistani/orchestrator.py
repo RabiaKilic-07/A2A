@@ -18,6 +18,10 @@ from .session import Session
 def handle_user_turn(session: Session, user_text: str) -> str:
     session.turn_tool_log = []                              # her tur logu sıfırla
     session.turn_tokens = 0                                 # her tur token sayaç sıfırla
+    session.turn_thinking = 0                              # her tur düşünce sayacı sıfırla
+    session.turn_llm_calls = 0                             # her tur LLM çağrı sayacı sıfırla
+    session.raw_log = []                                    # her tur ham LLM dökümünü sıfırla
+    session.__dict__["_raw_sys_seen"] = set()              # system-prompt tekrar tespiti (tur içi)
     target = route(session, user_text)
     session.last_target = target
 
